@@ -35,7 +35,7 @@ interface BaseTrack {
 
 export interface VideoTrack extends BaseTrack {
 	type: "video";
-	elements: (VideoElement | ImageElement)[];
+	elements: (VideoElement | ImageElement | HyperframesElement)[];
 	muted: boolean;
 	hidden: boolean;
 }
@@ -161,6 +161,30 @@ export interface EffectElement extends BaseTimelineElement {
 	effectType: string;
 }
 
+/**
+ * A HyperFrames HTML composition rendered as a first-class visual element.
+ * The composition source is stored inline; interactive preview happens in a
+ * sandboxed overlay and export goes through the CLI-rendered MP4
+ * (`renderedMediaId`).
+ */
+export interface HyperframesElement extends BaseTimelineElement {
+	type: "hyperframes";
+	compositionId: string;
+	html: string;
+	width: number;
+	height: number;
+	hidden?: boolean;
+	/** Set once the composition has been rendered to MP4 via the native CLI. */
+	renderedMediaId?: string;
+	/** Hash of the html + media refs at the time of render; invalidates cache. */
+	renderHash?: string;
+	agent?: {
+		conversationId?: string;
+		model?: string;
+		updatedAt?: string;
+	};
+}
+
 export type ElementUpdatePatch = { params?: Partial<ParamValues> };
 
 export type TimelineElement =
@@ -170,7 +194,8 @@ export type TimelineElement =
 	| TextElement
 	| StickerElement
 	| GraphicElement
-	| EffectElement;
+	| EffectElement
+	| HyperframesElement;
 
 export type ElementType = TimelineElement["type"];
 
@@ -198,6 +223,7 @@ export const VISUAL_ELEMENT_TYPES = elementTypes(
 	"text",
 	"sticker",
 	"graphic",
+	"hyperframes",
 );
 
 export type VisualElement = Extract<
@@ -216,6 +242,7 @@ export type CreateTextElement = Omit<TextElement, "id">;
 export type CreateStickerElement = Omit<StickerElement, "id">;
 export type CreateGraphicElement = Omit<GraphicElement, "id">;
 export type CreateEffectElement = Omit<EffectElement, "id">;
+export type CreateHyperframesElement = Omit<HyperframesElement, "id">;
 export type CreateTimelineElement =
 	| CreateAudioElement
 	| CreateVideoElement
@@ -223,7 +250,8 @@ export type CreateTimelineElement =
 	| CreateTextElement
 	| CreateStickerElement
 	| CreateGraphicElement
-	| CreateEffectElement;
+	| CreateEffectElement
+	| CreateHyperframesElement;
 
 export interface ElementDragState {
 	isDragging: boolean;

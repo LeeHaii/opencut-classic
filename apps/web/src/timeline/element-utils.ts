@@ -9,6 +9,7 @@ import {
 	type CreateVideoElement,
 	type CreateImageElement,
 	type CreateStickerElement,
+	type CreateHyperframesElement,
 	type CreateUploadAudioElement,
 	type CreateLibraryAudioElement,
 	type TextElement,
@@ -88,6 +89,44 @@ export function requiresMediaId({
 		element.type === "image" ||
 		(element.type === "audio" && element.sourceType === "upload")
 	);
+}
+
+/**
+ * Builds a blank AI-scene element with a seed placeholder composition.
+ * The html is replaced by the first agent turn.
+ */
+export function buildHyperframesElement({
+	compositionId,
+	html = "",
+	name = "AI scene",
+	duration,
+	startTime,
+	width,
+	height,
+}: {
+	compositionId: string;
+	html?: string;
+	name?: string;
+	duration: MediaTime;
+	startTime: MediaTime;
+	width: number;
+	height: number;
+}): CreateHyperframesElement {
+	return {
+		type: "hyperframes",
+		name,
+		compositionId,
+		html,
+		width,
+		height,
+		duration,
+		startTime,
+		trimStart: ZERO_MEDIA_TIME,
+		trimEnd: ZERO_MEDIA_TIME,
+		sourceDuration: duration,
+		hidden: false,
+		params: buildDefaultElementParams({ type: "hyperframes" }),
+	};
 }
 
 function buildDefaultElementParams({

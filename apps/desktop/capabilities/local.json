@@ -1,0 +1,11 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "local-editor",
+  "description": "Core + fs access for locally served editor contexts",
+  "windows": ["main"],
+  "local": true,
+  "permissions": [
+    "core:default",
+    "fs:allow-appdata-read-recursive"
+  ]
+}

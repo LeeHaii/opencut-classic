@@ -1,41 +1,70 @@
-use gpui::{
-    div, prelude::*, px, rgb, size, App, Application, Bounds, Context, SharedString, Window,
-    WindowBounds, WindowOptions,
-};
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-struct AppWindow {
-    title: SharedString,
-}
+mod commands;
+mod state;
+mod util;
 
-impl Render for AppWindow {
-    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
-        div()
-            .size_full()
-            .bg(rgb(0x0f0f0f))
-            .flex()
-            .justify_center()
-            .items_center()
-            .text_xl()
-            .text_color(rgb(0xffffff))
-            .child(self.title.clone())
+use state::AppState;
+use tauri::{Manager, WebviewUrl, WebviewWindowBuilder};
+
+const DEFAULT_PROD_URL: &str = "https://www.opencut.pro";
+
+fn editor_url() -> String {
+    if let Ok(url) = std::env::var("OPENCUT_DESKTOP_URL") {
+        if !url.trim().is_empty() {
+            return url;
+        }
+    }
+    if cfg!(debug_assertions) {
+        "http://localhost:3000".to_string()
+    } else {
+        DEFAULT_PROD_URL.to_string()
     }
 }
 
 fn main() {
-    Application::new().run(|cx: &mut App| {
-        let bounds = Bounds::centered(None, size(px(1280.), px(720.)), cx);
-        cx.open_window(
-            WindowOptions {
-                window_bounds: Some(WindowBounds::Windowed(bounds)),
-                ..Default::default()
-            },
-            |_, cx| {
-                cx.new(|_| AppWindow {
-                    title: "OpenCut".into(),
-                })
-            },
-        )
-        .unwrap();
-        cx.activate(true);
-    });
+    tauri::Builder::default()
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.set_focus();
+            }
+        }))
+        .plugin(tauri_plugin_fs::init())
+        .manage(AppState::default())
+        .invoke_handler(tauri::generate_handler![
+            commands::ping,
+            commands::app_data_dir,
+            commands::antigravity::antigravity_status,
+            commands::antigravity::antigravity_login,
+            commands::antigravity::antigravity_run,
+            commands::antigravity::antigravity_cancel,
+            commands::doctor::hf_doctor,
+            commands::render::hf_render,
+            commands::render::hf_render_cancel,
+            commands::studio::studio_open,
+            commands::studio::studio_write,
+            commands::studio::studio_append,
+            commands::studio::studio_close
+        ])
+        .setup(|app| {
+            let url = editor_url();
+            let parsed: tauri::Url = url.parse().map_err(|e| format!("invalid editor url: {e}"))?;
+            let window = WebviewWindowBuilder::new(app, "main", WebviewUrl::External(parsed))
+                .title("OpenCut")
+                .inner_size(1440.0, 900.0)
+                .min_inner_size(1024.0, 640.0)
+                .build()?;
+            let _ = window.set_focus();
+            Ok(())
+        })
+        .build(tauri::generate_context!())
+        .expect("failed to build tauri application")
+        .run(|app, event| {
+            if let tauri::RunEvent::Exit = event {
+                let state = app.state::<AppState>();
+                commands::studio::shutdown_inner(&state);
+                commands::antigravity::cancel_all(state);
+                commands::render::cancel_all(app.state::<AppState>());
+            }
+        });
 }
