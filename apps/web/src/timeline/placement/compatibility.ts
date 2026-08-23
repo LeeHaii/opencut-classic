@@ -8,6 +8,7 @@ const ELEMENT_TRACK_MAP: Record<ElementType, TrackType> = {
 	effect: "effect",
 	video: "video",
 	image: "video",
+	hyperframes: "video",
 };
 
 export function getTrackTypeForElementType({

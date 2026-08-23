@@ -350,6 +350,10 @@ elementParamRegistry.register({
 });
 elementParamRegistry.register({ key: "audio", definition: audioElementParams });
 elementParamRegistry.register({ key: "effect", definition: [] });
+elementParamRegistry.register({
+	key: "hyperframes",
+	definition: visualElementParams,
+});
 
 export function getElementParams({
 	element,

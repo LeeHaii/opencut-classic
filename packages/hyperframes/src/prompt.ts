@@ -1,0 +1,116 @@
+import type { AgentChatMessage } from "./types.js";
+
+export interface PromptContext {
+	request: string
+	compositionId: string
+	/** Duration of the clip being authored, in seconds. */
+	durationSecs: number
+	width: number
+	height: number
+	fps: number
+	/** Recent conversation turns for continuity (already capped). */
+	recentTurns?: AgentChatMessage[]
+	/** Absolute paths of reference images copied into the agent workspace. */
+	referenceImages?: string[]
+}
+
+const MAX_TURNS = 6;
+const MAX_REFERENCES = 4;
+
+/**
+ * Builds the constrained HyperFrames authoring prompt. Mirrors the proven
+ * upstream template but is parameterized by project canvas size/fps instead
+ * of hardcoded values.
+ */
+export function buildAgentPrompt(context: PromptContext): string {
+	const {
+		request,
+		compositionId,
+		durationSecs,
+		width,
+		height,
+		fps,
+		recentTurns = [],
+		referenceImages = [],
+	} = context;
+
+	const history =
+		recentTurns.length > 0
+			? `\nRecent scene conversation:\n${recentTurns.slice(-MAX_TURNS).map((m) => `${m.role.toUpperCase()}: ${m.text}`).join("\n")}\n`
+			: "";
+
+	const references =
+		referenceImages.length > 0
+			? `\nVisual references (MANDATORY FIRST STEP — call view_file on each listed image file before writing any HTML):\n${referenceImages.slice(0, MAX_REFERENCES).map((p) => `- ${p}`).join("\n")}\n`
+			: "";
+
+	return `You are the motion-design agent inside OpenCut. Create ONE NEW HyperFrames child composition that fulfils the user's request.
+
+Hard requirements:
+- Return a complete standalone HTML document inside one \`\`\`html code fence.
+- Keep a single composition root with id="${compositionId}", data-composition-id="${compositionId}", data-start="0", data-duration="${durationSecs}", data-width="${width}", data-height="${height}".
+- The child root MUST NOT have data-track-index and its data-start must remain exactly zero; the host timeline controls where the whole child starts.
+- Every timed visual uses class="clip", data-start and data-duration in seconds, an integer data-track-index, plus a unique stable id attribute.
+- Do not create a master timeline and do not use data-composition-src. Return only the new self-contained child animation.
+- Animations must be deterministic and seekable. Prefer a paused GSAP timeline registered at window.__timelines["${compositionId}"]. No setTimeout, Date.now, Math.random, autoplaying media or wall-clock CSS animations.
+- The composition plays at ${fps} fps; keep all timing in whole seconds or clean fractions that align to ${fps} fps frames.
+- Keep the exact child duration ${durationSecs} seconds. Do not shorten or extend it.
+- Preserve any existing local media URL exactly unless the user asks to remove it. Local media uses ${"opencut-media://local/..."} URLs — reference them as-is.
+- Do not use shell commands, network APIs, cookies, localStorage, sessionStorage, the parent window or desktop APIs. CDN script tags are allowed.
+- Filesystem access is restricted to view_file on the exact reference files listed below. Never use find_by_name/grep_search/run_command and never search outside the workspace.
+- Before the html fence, give a concise one-sentence summary of what you made. Do not output a diff.
+${references}${history}
+User request: ${request}`;
+}
+
+export interface SeedSpec {
+	compositionId: string
+	width: number
+	height: number
+	durationSecs: number
+	fps: number
+}
+
+/**
+ * Builds the fresh-composition starting point embedded into each first turn.
+ * Mirrors `hyperframes::composition::seed_composition` in rust/crates/hyperframes.
+ */
+export function buildSeedComposition(spec: SeedSpec): string {
+	const fontPx = Math.round(spec.height * 0.07);
+	const duration = formatDuration(spec.durationSecs);
+	return `<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>${spec.compositionId}</title>
+<script src="https://cdn.jsdelivr.net/npm/gsap@3/dist/gsap.min.js"></script>
+<style>
+  html, body { margin: 0; padding: 0; background: #000; overflow: hidden; }
+  #${spec.compositionId} { position: relative; width: ${spec.width}px; height: ${spec.height}px; overflow: hidden; }
+</style>
+</head>
+<body>
+<div id="${spec.compositionId}" data-composition-id="${spec.compositionId}" data-start="0" data-duration="${duration}" data-width="${spec.width}" data-height="${spec.height}">
+<!--opencut-chat-insert-->
+  <h1 class="clip" data-start="0" data-duration="${duration}" data-track-index="0"
+      style="position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);color:#fff;font:700 ${fontPx}px sans-serif;">
+    New scene
+  </h1>
+</div>
+<script>
+  window.__timelines = window.__timelines || {};
+  window.__timelines["${spec.compositionId}"] = (function () {
+    const rootSel = "#" + "${spec.compositionId}";
+    const tl = gsap.timeline({ paused: true });
+    tl.from(rootSel + " h1", { opacity: 0, y: 40, duration: 0.8 }, 0);
+    return tl;
+  })();
+</script>
+</body>
+</html>`;
+}
+
+function formatDuration(value: number): string {
+	const rounded = Math.round(value * 1000) / 1000;
+	return Number.isInteger(rounded) ? String(rounded) : String(rounded);
+}
