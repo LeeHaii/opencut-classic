@@ -1,7 +1,7 @@
 import type { SceneTracks, TimelineElement } from "@/timeline";
 import type { MediaAsset } from "@/media/types";
 import { STICKER_INTRINSIC_SIZE_FALLBACK } from "@/stickers/intrinsic-size";
-import { DEFAULT_GRAPHIC_SOURCE_SIZE } from "@/graphics";
+import { getGraphicSourceSize } from "@/graphics";
 import { measureTextElement } from "@/text/measure-element";
 import {
 	getElementLocalTime,
@@ -160,11 +160,15 @@ function getElementBounds({
 			animations: element.animations,
 			localTime,
 		});
+		const { width: sourceWidth, height: sourceHeight } =
+			getGraphicSourceSize({
+				definitionId: element.definitionId,
+			});
 		return getVisualElementBounds({
 			canvasWidth,
 			canvasHeight,
-			sourceWidth: DEFAULT_GRAPHIC_SOURCE_SIZE,
-			sourceHeight: DEFAULT_GRAPHIC_SOURCE_SIZE,
+			sourceWidth,
+			sourceHeight,
 			transform,
 		});
 	}

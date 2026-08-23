@@ -12,6 +12,8 @@ import {
 	Settings01Icon,
 	SlidersHorizontalIcon,
 	ColorsIcon,
+	AiMagicIcon,
+	SparklesIcon,
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon, type IconSvgElement } from "@hugeicons/react";
 
@@ -24,6 +26,8 @@ export const TAB_KEYS = [
 	"transitions",
 	"captions",
 	"adjustment",
+	"ai",
+	"motion",
 	"settings",
 ] as const;
 
@@ -67,6 +71,14 @@ export const tabs = {
 	adjustment: {
 		icon: createHugeiconsIcon({ icon: SlidersHorizontalIcon }),
 		label: "Adjustment",
+	},
+	ai: {
+		icon: createHugeiconsIcon({ icon: AiMagicIcon }),
+		label: "AI",
+	},
+	motion: {
+		icon: createHugeiconsIcon({ icon: SparklesIcon }),
+		label: "Motion",
 	},
 	settings: {
 		icon: createHugeiconsIcon({ icon: Settings01Icon }),

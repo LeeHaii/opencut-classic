@@ -25,7 +25,7 @@ import type {
 	TextureCanvasDrawFn,
 	TextureUploadDescriptor,
 } from "./types";
-import { DEFAULT_GRAPHIC_SOURCE_SIZE } from "@/graphics";
+import { getGraphicSourceSize } from "@/graphics";
 
 export async function buildFrameDescriptor({
 	node,
@@ -222,22 +222,32 @@ async function collectVisualSourceNode({
 		return;
 	}
 
+	const graphicSize =
+		node instanceof GraphicNode
+			? getGraphicSourceSize({ definitionId: node.params.definitionId })
+			: null;
 	const source =
 		node instanceof GraphicNode
-			? node.getSource({ resolvedParams: node.resolved.resolvedParams })
+			? node.getSource({
+					resolvedParams: node.resolved.resolvedParams,
+					localTimeSec: node.resolved.localTime,
+				})
 			: node.resolved.source;
 	if (!source) {
 		return;
 	}
 
-	const sourceWidth =
-		node instanceof GraphicNode
-			? DEFAULT_GRAPHIC_SOURCE_SIZE
-			: (node.resolved as ResolvedVisualSourceNodeState).sourceWidth;
-	const sourceHeight =
-		node instanceof GraphicNode
-			? DEFAULT_GRAPHIC_SOURCE_SIZE
-			: (node.resolved as ResolvedVisualSourceNodeState).sourceHeight;
+	let sourceWidth: number;
+	let sourceHeight: number;
+	if (graphicSize) {
+		sourceWidth = graphicSize.width;
+		sourceHeight = graphicSize.height;
+	} else if ("sourceWidth" in node.resolved && "sourceHeight" in node.resolved) {
+		sourceWidth = node.resolved.sourceWidth;
+		sourceHeight = node.resolved.sourceHeight;
+	} else {
+		return;
+	}
 
 	const textureId = `${path}:source`;
 	textures.set(textureId, {

@@ -48,6 +48,18 @@ export function getGraphicDefinition({
 	return graphicsRegistry.get(definitionId);
 }
 
+export function getGraphicSourceSize({
+	definitionId,
+}: {
+	definitionId: string;
+}): { width: number; height: number } {
+	const definition = getGraphicDefinition({ definitionId });
+	return {
+		width: definition.sourceWidth ?? DEFAULT_GRAPHIC_SOURCE_SIZE,
+		height: definition.sourceHeight ?? DEFAULT_GRAPHIC_SOURCE_SIZE,
+	};
+}
+
 export function buildDefaultGraphicInstance({
 	definitionId,
 }: {

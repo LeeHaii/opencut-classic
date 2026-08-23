@@ -7,6 +7,13 @@ export interface GraphicRenderContext {
 	params: ParamValues;
 	width: number;
 	height: number;
+	/**
+	 * Seconds since the element's local start. Only provided when the
+	 * definition opts into time-driven rendering via `animated`.
+	 */
+	localTime?: number;
+	/** Element duration in seconds. Only provided for animated definitions. */
+	durationSec?: number;
 }
 
 export interface GraphicDefinition {
@@ -14,6 +21,15 @@ export interface GraphicDefinition {
 	name: string;
 	keywords: string[];
 	params: ParamDefinition[];
+	/**
+	 * When true, the render output depends on `localTime` and is re-rendered
+	 * every frame instead of being cached per param set.
+	 */
+	animated?: boolean;
+	/** Source canvas width. Defaults to DEFAULT_GRAPHIC_SOURCE_SIZE. */
+	sourceWidth?: number;
+	/** Source canvas height. Defaults to DEFAULT_GRAPHIC_SOURCE_SIZE. */
+	sourceHeight?: number;
 	render(context: GraphicRenderContext): void;
 }
 
