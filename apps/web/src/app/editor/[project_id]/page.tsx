@@ -36,6 +36,7 @@ import {
 } from "@/timeline/bookmarks/index";
 import { getHyperframesPreviewOverlaySource } from "@/hyperframes/preview-overlay";
 import { usePlaybackTime } from "@/hyperframes/use-playback-time";
+import type { TScene } from "@/timeline";
 
 export default function Editor() {
 	const params = useParams();
@@ -89,55 +90,8 @@ function EditorLayout() {
 	const activeScene = useEditor((editor) =>
 		editor.scenes.getActiveSceneOrNull(),
 	);
-	const currentTime = usePlaybackTime();
 	const canvasSize = useEditor(
 		(editor) => editor.project.getActive()?.settings.canvasSize,
-	);
-	const activeGuide = usePreviewStore((state) => state.activeGuide);
-	const overlays = usePreviewStore((state) => state.overlays);
-	const setOverlayVisibility = usePreviewStore(
-		(state) => state.setOverlayVisibility,
-	);
-	const showBookmarkNotes = isPreviewOverlayVisible({
-		overlay: bookmarkNotesPreviewOverlay,
-		overlays,
-	});
-
-	const overlaySource = useMemo(
-		() =>
-			mergePreviewOverlaySources({
-				sources: [
-					getGuidePreviewOverlaySource({
-						guideId: activeGuide,
-					}),
-					activeScene
-						? getBookmarkPreviewOverlaySource({
-								bookmarks: activeScene.bookmarks,
-								time: currentTime,
-								isVisible: showBookmarkNotes,
-							})
-						: {
-								definitions: [bookmarkNotesPreviewOverlay],
-								instances: [],
-							},
-					activeScene && canvasSize
-						? getHyperframesPreviewOverlaySource({
-								tracks: activeScene.tracks,
-								timelineTime: currentTime,
-								projectCanvasSize: canvasSize,
-							})
-						: { definitions: [], instances: [] },
-				],
-			}),
-		[activeGuide, activeScene, canvasSize, currentTime, showBookmarkNotes],
-	);
-
-	const overlayControls = useMemo(
-		() =>
-			overlaySource.definitions.map((overlay) =>
-				createPreviewOverlayControl({ overlay, overlays }),
-			),
-		[overlaySource.definitions, overlays],
 	);
 
 	return (
@@ -189,10 +143,9 @@ function EditorLayout() {
 						minSize={30}
 						className="min-h-0 min-w-0 flex-1"
 					>
-						<PreviewPanel
-							overlayControls={overlayControls}
-							overlayInstances={overlaySource.instances}
-							onOverlayVisibilityChange={setOverlayVisibility}
+						<PlaybackOverlayPreviewPanel
+							activeScene={activeScene}
+							canvasSize={canvasSize}
 						/>
 					</ResizablePanel>
 
@@ -220,5 +173,69 @@ function EditorLayout() {
 				<Timeline />
 			</ResizablePanel>
 		</ResizablePanelGroup>
+	);
+}
+
+function PlaybackOverlayPreviewPanel({
+	activeScene,
+	canvasSize,
+}: {
+	activeScene: TScene | null;
+	canvasSize: { width: number; height: number } | undefined;
+}) {
+	const currentTime = usePlaybackTime();
+	const activeGuide = usePreviewStore((state) => state.activeGuide);
+	const overlays = usePreviewStore((state) => state.overlays);
+	const setOverlayVisibility = usePreviewStore(
+		(state) => state.setOverlayVisibility,
+	);
+	const showBookmarkNotes = isPreviewOverlayVisible({
+		overlay: bookmarkNotesPreviewOverlay,
+		overlays,
+	});
+
+	const overlaySource = useMemo(
+		() =>
+			mergePreviewOverlaySources({
+				sources: [
+					getGuidePreviewOverlaySource({
+						guideId: activeGuide,
+					}),
+					activeScene
+						? getBookmarkPreviewOverlaySource({
+								bookmarks: activeScene.bookmarks,
+								time: currentTime,
+								isVisible: showBookmarkNotes,
+							})
+						: {
+								definitions: [bookmarkNotesPreviewOverlay],
+								instances: [],
+							},
+					activeScene && canvasSize
+						? getHyperframesPreviewOverlaySource({
+								tracks: activeScene.tracks,
+								timelineTime: currentTime,
+								projectCanvasSize: canvasSize,
+							})
+						: { definitions: [], instances: [] },
+				],
+			}),
+		[activeGuide, activeScene, canvasSize, currentTime, showBookmarkNotes],
+	);
+
+	const overlayControls = useMemo(
+		() =>
+			overlaySource.definitions.map((overlay) =>
+				createPreviewOverlayControl({ overlay, overlays }),
+			),
+		[overlaySource.definitions, overlays],
+	);
+
+	return (
+		<PreviewPanel
+			overlayControls={overlayControls}
+			overlayInstances={overlaySource.instances}
+			onOverlayVisibilityChange={setOverlayVisibility}
+		/>
 	);
 }

@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { PanelView } from "@/components/editor/panels/assets/views/base-panel";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Spinner } from "@/components/ui/spinner";
 import {
@@ -42,7 +43,11 @@ import {
 	type AntigravityStatus,
 } from "@opencut/hyperframes";
 import { buildHyperframesElement } from "@/timeline/element-utils";
-import { mediaTimeFromSeconds, mediaTimeToSeconds } from "@/wasm";
+import {
+	mediaTimeFromSeconds,
+	mediaTimeToSeconds,
+	roundFrameTime,
+} from "@/wasm";
 import { frameRateToFloat } from "@/fps/utils";
 import { renderHyperframesElement } from "../render-element";
 import { runBrowserHyperframesAgent } from "../browser-agent";
@@ -127,18 +132,40 @@ export function AiMotionPanelView() {
 		const width = settings?.canvasSize.width ?? 1920;
 		const height = settings?.canvasSize.height ?? 1080;
 		const compositionId = `hf-${newId().replace(/-/g, "").slice(0, 12)}`;
+		const existingNames = collectHyperframesElements({
+			tracks: editor.scenes.getActiveSceneOrNull()?.tracks ?? null,
+		}).map(({ element }) => element.name);
 		const element = buildHyperframesElement({
 			compositionId,
+			name: nextUniqueSceneName(existingNames),
 			startTime: editor.playback.getCurrentTime(),
-			duration: mediaTimeFromSeconds({ seconds: 5 }),
+			duration: mediaTimeFromSeconds({ seconds: DEFAULT_SCENE_DURATION_SECS }),
 			width,
 			height,
 		});
 		editor.timeline.insertElement({ element, placement: { mode: "auto" } });
 	}, [editor]);
 
-	const handleSend = async (request: string) => {
+	const renameActiveScene = (name: string) => {
 		const entry = activeEntry;
+		if (!entry) return;
+		const trimmed = name.trim();
+		if (!trimmed || trimmed === entry.element.name) return;
+		editor.timeline.updateElements({
+			updates: [
+				{
+					trackId: entry.trackId,
+					elementId: entry.element.id,
+					patch: { name: trimmed },
+				},
+			],
+		});
+	};
+
+	const handleSend = async (request: string) => {
+		const entry = resolvedActiveElementId
+			? findEntry({ editor, elementId: resolvedActiveElementId })
+			: null;
 		if (!entry || !project) return;
 		const element = entry.element;
 		const settings = project.settings;
@@ -267,6 +294,46 @@ export function AiMotionPanelView() {
 				browserRuns.current.delete(element.id);
 				store.setRun({ elementId: element.id, run: { running: false } });
 			}
+		}
+	};
+
+	const changeSceneLength = (seconds: number) => {
+		const entry = activeEntry;
+		if (!entry || !Number.isFinite(seconds)) return;
+		const requested = Math.min(
+			MAX_SCENE_LENGTH_SECS,
+			Math.max(MIN_SCENE_LENGTH_SECS, seconds),
+		);
+		const fps = editor.project.getActiveOrNull()?.settings.fps;
+		const rawTime = mediaTimeFromSeconds({ seconds: requested });
+		const time = fps ? roundFrameTime({ time: rawTime, fps }) : rawTime;
+		const nextSecs = mediaTimeToSeconds({ time });
+		const currentSecs = mediaTimeToSeconds({ time: entry.element.duration });
+		if (
+			nextSecs <= 0 ||
+			Math.abs(nextSecs - currentSecs) < LENGTH_EPSILON_SECS
+		) {
+			return;
+		}
+
+		editor.timeline.updateElements({
+			updates: [
+				{
+					trackId: entry.trackId,
+					elementId: entry.element.id,
+					patch: { duration: time, sourceDuration: time },
+				},
+			],
+		});
+
+		const hasHtml = entry.element.html.trim().length > 0;
+		const isRunning =
+			useHyperframesPanelStore.getState().runs[entry.element.id]?.running ??
+			false;
+		if (hasHtml && !isRunning) {
+			void handleSend(
+				`Change the total composition duration to exactly ${formatLengthLabel(nextSecs)} seconds. Keep the existing visual style and content, and retime or extend every clip so the animation fills the full duration.`,
+			);
 		}
 	};
 
@@ -510,50 +577,45 @@ export function AiMotionPanelView() {
 	const status = store.status;
 	const models =
 		store.models.length > 0 ? store.models : DEFAULT_ANTIGRAVITY_MODELS;
+	const activeLengthSecs = activeEntry
+		? mediaTimeToSeconds({ time: activeEntry.element.duration })
+		: 0;
 
 	return (
 		<PanelView title="AI Motion" contentClassName="h-full">
-			<div className="flex min-h-full flex-col gap-3 pb-5">
+			<div className="flex min-h-full flex-col gap-2 pb-4">
 				{!native && (
-					<div className="border-border/70 bg-muted/35 text-muted-foreground rounded-lg border px-3 py-2.5 text-[11px] leading-relaxed">
-						<div className="text-foreground mb-1 flex items-center gap-1.5 font-medium">
-							<Sparkles className="size-3.5" /> Browser AI
-						</div>
-						Groq generates the scene; OpenCut renders HTML/CSS/GSAP locally with
-						WebCodecs.
+					<div className="border-border/60 bg-muted/30 text-muted-foreground flex items-start gap-1.5 rounded-md border px-2 py-1.5 text-[10px] leading-relaxed">
+						<Sparkles className="text-primary mt-px size-3 shrink-0" />
+						<p>
+							<span className="text-foreground font-medium">Browser AI</span>{" "}
+							— Groq generates the scene; OpenCut renders HTML/CSS/GSAP locally
+							with WebCodecs.
+						</p>
 					</div>
 				)}
 
 				{native && status && (
-					<div className="border-border/70 bg-muted/30 flex items-center gap-2.5 rounded-lg border px-3 py-2.5 text-[11px]">
-						<div
-							className={cn(
-								"flex size-7 shrink-0 items-center justify-center rounded-full",
-								status.installed
-									? "bg-emerald-500/12 text-emerald-600"
-									: "bg-destructive/10 text-destructive",
-							)}
-						>
-							{status.installed ? (
-								<CheckCircle2 className="size-3.5" />
-							) : (
-								<AlertTriangle className="size-3.5" />
-							)}
-						</div>
-						<div className="min-w-0 flex-1">
+					<div className="border-border/60 bg-muted/25 flex items-center gap-2 rounded-md border px-2 py-1.5 text-[10px]">
+						{status.installed ? (
+							<CheckCircle2 className="size-3 shrink-0 text-emerald-600" />
+						) : (
+							<AlertTriangle className="size-3 shrink-0 text-destructive" />
+						)}
+						<div className="min-w-0 flex-1 leading-tight">
 							<p className="text-foreground truncate font-medium">
 								{status.installed
 									? (status.accountEmail ?? "Antigravity CLI detected")
 									: "Antigravity CLI not found"}
 							</p>
-							<p className="text-muted-foreground truncate text-[10px]">
+							<p className="text-muted-foreground truncate text-[9px]">
 								{status.installed
 									? "Desktop agent ready"
 									: "Install the CLI to generate scenes"}
 							</p>
 						</div>
 						{status.installed && !status.minimumVersionMet && (
-							<span className="text-destructive shrink-0 text-[10px]">
+							<span className="text-destructive shrink-0 text-[9px]">
 								Update CLI
 							</span>
 						)}
@@ -561,7 +623,7 @@ export function AiMotionPanelView() {
 							<Button
 								size="sm"
 								variant="secondary"
-								className="h-6 px-2 text-[10px]"
+								className="h-5 rounded px-1.5 text-[9px]"
 								onClick={() => void nativeInvoke("antigravity_login")}
 							>
 								Sign in
@@ -573,14 +635,14 @@ export function AiMotionPanelView() {
 				{native && nativeRenderStatus && (
 					<div
 						className={cn(
-							"flex items-center gap-2 rounded-lg border px-3 py-2 text-[10px]",
+							"flex items-center gap-1.5 rounded-md border px-2 py-1 text-[10px]",
 							nativeRenderStatus.node.found &&
 								nativeRenderStatus.hyperframes_cli.found
 								? "border-emerald-500/20 bg-emerald-500/5 text-emerald-700"
 								: "border-destructive/20 bg-destructive/5 text-destructive",
 						)}
 					>
-						<Film className="size-3.5 shrink-0" />
+						<Film className="size-3 shrink-0" />
 						<span className="truncate">
 							{nativeRenderStatus.node.found &&
 							nativeRenderStatus.hyperframes_cli.found
@@ -590,16 +652,14 @@ export function AiMotionPanelView() {
 					</div>
 				)}
 
-				<Button className="w-full" onClick={insertScene}>
-					<Sparkles className="size-4" />
+				<Button size="sm" className="h-8 w-full" onClick={insertScene}>
+					<Sparkles className="size-3.5" />
 					Add AI scene at playhead
 				</Button>
 
 				{hyperframesElements.length > 0 && (
 					<div className="space-y-1.5">
-						<p className="text-muted-foreground px-0.5 text-[10px] font-medium uppercase tracking-wide">
-							Scene
-						</p>
+						<SectionLabel>Scene</SectionLabel>
 						<Select
 							value={resolvedActiveElementId ?? ""}
 							onValueChange={(value) => {
@@ -607,7 +667,7 @@ export function AiMotionPanelView() {
 								setNativeActionError(null);
 							}}
 						>
-							<SelectTrigger className="h-9 text-xs">
+							<SelectTrigger className="h-8 text-xs">
 								<SelectValue placeholder="Select scene" />
 							</SelectTrigger>
 							<SelectContent>
@@ -619,6 +679,21 @@ export function AiMotionPanelView() {
 								))}
 							</SelectContent>
 						</Select>
+						{activeEntry && (
+							<div className="grid grid-cols-2 gap-1.5">
+								<SceneNameField
+									key={`name-${activeEntry.element.id}:${activeEntry.element.name}`}
+									initialName={activeEntry.element.name}
+									onCommit={renameActiveScene}
+								/>
+								<SceneLengthField
+									key={`length-${activeEntry.element.id}:${formatLengthLabel(activeLengthSecs)}`}
+									seconds={activeLengthSecs}
+									disabled={run?.running === true}
+									onCommit={changeSceneLength}
+								/>
+							</div>
+						)}
 					</div>
 				)}
 
@@ -626,14 +701,12 @@ export function AiMotionPanelView() {
 					<>
 						{native && status?.installed && (
 							<div className="space-y-1.5">
-								<p className="text-muted-foreground px-0.5 text-[10px] font-medium uppercase tracking-wide">
-									Model
-								</p>
+								<SectionLabel>Model</SectionLabel>
 								<Select
 									value={store.model}
 									onValueChange={(value) => store.setModel(value)}
 								>
-									<SelectTrigger className="h-9 text-xs">
+									<SelectTrigger className="h-8 text-xs">
 										<SelectValue placeholder="Choose a model" />
 									</SelectTrigger>
 									<SelectContent>
@@ -649,10 +722,8 @@ export function AiMotionPanelView() {
 
 						<div className="space-y-1.5">
 							<div className="flex items-center justify-between px-0.5">
-								<p className="text-muted-foreground text-[10px] font-medium uppercase tracking-wide">
-									Conversation
-								</p>
-								<span className="text-muted-foreground text-[10px]">
+								<SectionLabel>Conversation</SectionLabel>
+								<span className="text-muted-foreground text-[9px]">
 									{chat.length} {chat.length === 1 ? "message" : "messages"}
 								</span>
 							</div>
@@ -660,15 +731,15 @@ export function AiMotionPanelView() {
 						</div>
 
 						{run?.running && (
-							<div className="border-primary/20 bg-primary/5 text-muted-foreground flex items-center gap-2 rounded-lg border px-2.5 py-2 text-[11px]">
-								<Spinner className="size-3.5" />
+							<div className="border-primary/20 bg-primary/5 text-muted-foreground flex items-center gap-2 rounded-md border px-2 py-1.5 text-[10px]">
+								<Spinner className="size-3" />
 								<span className="truncate font-mono">
 									{run.streamLine ?? "Working…"}
 								</span>
 								<Button
 									variant="ghost"
 									size="sm"
-									className="ml-auto h-6 px-2 text-[10px]"
+									className="ml-auto h-5 rounded px-1.5 text-[9px]"
 									onClick={() => {
 										if (native && run.requestId) {
 											void nativeInvoke("antigravity_cancel", {
@@ -690,17 +761,18 @@ export function AiMotionPanelView() {
 						/>
 
 						{nativeActionError && (
-							<div className="border-destructive/25 bg-destructive/8 text-destructive flex gap-2 rounded-lg border px-2.5 py-2 text-[11px] leading-relaxed">
-								<AlertTriangle className="mt-0.5 size-3.5 shrink-0" />
+							<div className="border-destructive/25 bg-destructive/8 text-destructive flex gap-1.5 rounded-md border px-2 py-1.5 text-[10px] leading-relaxed">
+								<AlertTriangle className="mt-px size-3 shrink-0" />
 								<span>{nativeActionError}</span>
 							</div>
 						)}
 
-						<div className="grid grid-cols-2 gap-2 border-t pt-3">
+						<div className="grid grid-cols-2 gap-1.5 border-t pt-2">
 							{native ? (
 								<Button
 									variant="default"
-									className="min-w-0 px-2 text-xs"
+									size="sm"
+									className="h-8 min-w-0 px-2 text-[11px]"
 									onClick={() => void handleRender()}
 									disabled={
 										!activeEntry.element.html ||
@@ -717,14 +789,15 @@ export function AiMotionPanelView() {
 											: "Render MP4"}
 								</Button>
 							) : (
-								<p className="text-muted-foreground col-span-2 px-1 text-[11px]">
+								<p className="text-muted-foreground col-span-2 px-0.5 text-[10px] leading-relaxed">
 									No pre-render needed: Export renders this scene locally in the
 									browser.
 								</p>
 							)}
 							<Button
 								variant="outline"
-								className="min-w-0 px-2 text-xs"
+								size="sm"
+								className="h-8 min-w-0 px-2 text-[11px]"
 								onClick={() => void handleOpenStudio()}
 								disabled={!native || !activeEntry.element.html}
 							>
@@ -739,30 +812,125 @@ export function AiMotionPanelView() {
 	);
 }
 
+function SectionLabel({ children }: { children: React.ReactNode }) {
+	return (
+		<p className="text-muted-foreground px-0.5 text-[9px] font-medium tracking-[0.08em] uppercase">
+			{children}
+		</p>
+	);
+}
+
+function SceneNameField({
+	initialName,
+	onCommit,
+}: {
+	initialName: string;
+	onCommit: (name: string) => void;
+}) {
+	const [value, setValue] = useState(initialName);
+	const commit = () => {
+		const trimmed = value.trim();
+		if (!trimmed) {
+			setValue(initialName);
+			return;
+		}
+		if (trimmed !== initialName) {
+			onCommit(trimmed);
+		}
+	};
+	return (
+		<div className="space-y-1">
+			<SectionLabel>Name</SectionLabel>
+			<Input
+				size="xs"
+				aria-label="Scene name"
+				value={value}
+				spellCheck={false}
+				maxLength={80}
+				onChange={(event) => setValue(event.target.value)}
+				onBlur={commit}
+				onKeyDown={(event) => {
+					if (event.key === "Enter") {
+						event.preventDefault();
+						event.currentTarget.blur();
+					}
+				}}
+			/>
+		</div>
+	);
+}
+
+function SceneLengthField({
+	seconds,
+	disabled,
+	onCommit,
+}: {
+	seconds: number;
+	disabled: boolean;
+	onCommit: (seconds: number) => void;
+}) {
+	const [value, setValue] = useState(() => formatLengthLabel(seconds));
+	const commit = () => {
+		const parsed = Number.parseFloat(value.replace(",", "."));
+		if (!Number.isFinite(parsed)) {
+			setValue(formatLengthLabel(seconds));
+			return;
+		}
+		setValue(formatLengthLabel(parsed));
+		onCommit(parsed);
+	};
+	return (
+		<div className="space-y-1">
+			<SectionLabel>Length · seconds</SectionLabel>
+			<Input
+				size="xs"
+				type="number"
+				aria-label="Scene length in seconds"
+				inputMode="decimal"
+				min={MIN_SCENE_LENGTH_SECS}
+				max={MAX_SCENE_LENGTH_SECS}
+				step={0.5}
+				value={value}
+				disabled={disabled}
+				onChange={(event) => setValue(event.target.value)}
+				onBlur={commit}
+				onKeyDown={(event) => {
+					if (event.key === "Enter") {
+						event.preventDefault();
+						event.currentTarget.blur();
+					}
+				}}
+			/>
+		</div>
+	);
+}
+
 function ChatHistory({ messages }: { messages: AgentChatMessage[] }) {
 	if (messages.length === 0) {
 		return (
-			<div className="border-border/70 bg-muted/20 flex min-h-28 flex-col items-center justify-center rounded-xl border border-dashed px-5 py-6 text-center">
-				<div className="bg-primary/10 text-primary mb-2 flex size-8 items-center justify-center rounded-full">
-					<Bot className="size-4" />
+			<div className="border-border/60 bg-muted/20 flex min-h-20 flex-col items-center justify-center rounded-lg border border-dashed px-4 py-4 text-center">
+				<div className="bg-primary/10 text-primary mb-1.5 flex size-6 items-center justify-center rounded-full">
+					<Bot className="size-3" />
 				</div>
-				<p className="text-foreground text-xs font-medium">Build with AI</p>
-				<p className="text-muted-foreground mt-1 text-[11px] leading-relaxed">
+				<p className="text-foreground text-[11px] font-medium">
+					Build with AI
+				</p>
+				<p className="text-muted-foreground mt-0.5 text-[10px] leading-relaxed">
 					Describe a title, data card, transition, or complete motion scene.
 				</p>
 			</div>
 		);
 	}
 	return (
-		<div className="border-border/70 bg-muted/15 flex max-h-[34vh] min-h-32 flex-col gap-3 overflow-y-auto rounded-xl border p-2.5">
+		<div className="border-border/60 bg-muted/15 flex max-h-[32vh] min-h-24 flex-col gap-2 overflow-y-auto rounded-lg border p-1.5">
 			{messages.map((message) => {
 				if (message.role === "system") {
 					return (
 						<div
 							key={message.id}
-							className="border-destructive/20 bg-destructive/8 text-destructive flex gap-2 rounded-lg border px-2.5 py-2 text-[11px] leading-relaxed"
+							className="border-destructive/20 bg-destructive/8 text-destructive flex gap-1.5 rounded-md border px-2 py-1.5 text-[10px] leading-relaxed"
 						>
-							<AlertTriangle className="mt-0.5 size-3.5 shrink-0" />
+							<AlertTriangle className="mt-px size-3 shrink-0" />
 							<span className="whitespace-pre-wrap">{message.text}</span>
 						</div>
 					);
@@ -771,32 +939,32 @@ function ChatHistory({ messages }: { messages: AgentChatMessage[] }) {
 				return (
 					<div
 						key={message.id}
-						className={cn("flex gap-2", user && "flex-row-reverse")}
+						className={cn("flex gap-1.5", user && "flex-row-reverse")}
 					>
 						<div
 							className={cn(
-								"mt-4 flex size-6 shrink-0 items-center justify-center rounded-full",
+								"mt-3.5 flex size-5 shrink-0 items-center justify-center rounded-full",
 								user
 									? "bg-primary text-primary-foreground"
 									: "bg-foreground text-background",
 							)}
 						>
 							{user ? (
-								<UserRound className="size-3" />
+								<UserRound className="size-2.5" />
 							) : (
-								<Bot className="size-3" />
+								<Bot className="size-2.5" />
 							)}
 						</div>
-						<div className={cn("max-w-[82%]", user && "text-right")}>
-							<p className="text-muted-foreground mb-1 px-1 text-[9px] font-medium uppercase tracking-wide">
+						<div className={cn("max-w-[85%]", user && "text-right")}>
+							<p className="text-muted-foreground mb-0.5 px-0.5 text-[8px] font-medium tracking-wide uppercase">
 								{user ? "You" : "Antigravity"}
 							</p>
 							<div
 								className={cn(
-									"whitespace-pre-wrap rounded-xl px-3 py-2 text-left text-[11px] leading-relaxed",
+									"whitespace-pre-wrap rounded-lg px-2.5 py-1.5 text-left text-[11px] leading-relaxed",
 									user
 										? "bg-primary text-primary-foreground rounded-tr-sm"
-										: "bg-background border-border/70 rounded-tl-sm border",
+										: "bg-background border-border/60 rounded-tl-sm border",
 								)}
 							>
 								{message.text}
@@ -825,7 +993,7 @@ function PromptInput({
 	};
 	return (
 		<form
-			className="border-border/70 bg-background rounded-xl border p-2 shadow-xs"
+			className="border-border/60 bg-background focus-within:border-primary/40 rounded-lg border p-1.5 shadow-xs transition-colors"
 			onSubmit={(event) => {
 				event.preventDefault();
 				submit();
@@ -841,20 +1009,20 @@ function PromptInput({
 						submit();
 					}
 				}}
-				className="bg-transparent min-h-16 resize-none border-0 p-1.5 text-xs shadow-none focus-visible:border-0"
+				className="bg-transparent min-h-11 resize-none border-0 p-1 text-[11px] shadow-none focus-visible:border-0"
 				disabled={disabled}
 			/>
-			<div className="mt-1 flex items-center justify-between gap-2">
-				<span className="text-muted-foreground pl-1 text-[9px]">
+			<div className="mt-0.5 flex items-center justify-between gap-2">
+				<span className="text-muted-foreground pl-0.5 text-[9px]">
 					Shift + Enter for a new line
 				</span>
 				<Button
 					type="submit"
 					size="sm"
-					className="h-7 px-2.5 text-[11px]"
+					className="h-6.5 px-2 text-[10px]"
 					disabled={disabled || !value.trim()}
 				>
-					<SendHorizontal className="size-3.5" />
+					<SendHorizontal className="size-3" />
 					Send
 				</Button>
 			</div>
@@ -911,4 +1079,28 @@ function summaryFromReply(text: string): string {
 
 function errorMessage(error: unknown): string {
 	return error instanceof Error ? error.message : String(error);
+}
+
+// --- Scene naming & length ----------------------------------------------------
+
+const DEFAULT_SCENE_DURATION_SECS = 5;
+const MIN_SCENE_LENGTH_SECS = 0.5;
+const MAX_SCENE_LENGTH_SECS = 600;
+const LENGTH_EPSILON_SECS = 0.001;
+
+function nextUniqueSceneName(existingNames: string[]): string {
+	const base = "AI scene";
+	const used = new Set(existingNames.map((name) => name.trim().toLowerCase()));
+	if (!used.has(base.toLowerCase())) {
+		return base;
+	}
+	let index = 1;
+	while (used.has(`${base} (${index})`.toLowerCase())) {
+		index += 1;
+	}
+	return `${base} (${index})`;
+}
+
+function formatLengthLabel(seconds: number): string {
+	return String(Number.parseFloat(seconds.toFixed(3)));
 }

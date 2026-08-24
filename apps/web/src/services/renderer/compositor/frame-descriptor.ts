@@ -1,6 +1,7 @@
 import { drawCssBackground } from "@/gradients";
 import { getMaskDefinition } from "@/masks";
 import { incrementCounter } from "@/diagnostics/render-perf";
+import { TICKS_PER_SECOND } from "@/wasm";
 import type { AnyBaseNode } from "../nodes/base-node";
 import type { CanvasRenderer } from "../canvas-renderer";
 import { createCanvasSurface } from "../canvas-utils";
@@ -232,7 +233,7 @@ async function collectVisualSourceNode({
 		node instanceof GraphicNode
 			? node.getSource({
 					resolvedParams: node.resolved.resolvedParams,
-					localTimeSec: node.resolved.localTime,
+					localTimeSec: node.resolved.localTime / TICKS_PER_SECOND,
 				})
 			: node.resolved.source;
 	if (!source) {
