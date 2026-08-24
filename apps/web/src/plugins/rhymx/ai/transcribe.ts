@@ -4,6 +4,7 @@ import {
 	parseTranscriptionPayload,
 	type GroqTranscriptionResult,
 } from "./groq-client";
+import { prepareTranscriptionFile } from "./audio-prep";
 
 export interface RhymxTranscriptionResult extends GroqTranscriptionResult {
 	source: "server" | "byok";
@@ -25,9 +26,10 @@ export async function transcribeVoiceover({
 	language?: string;
 	signal?: AbortSignal;
 }): Promise<RhymxTranscriptionResult> {
+	const uploadFile = await prepareTranscriptionFile({ file });
 	try {
 		const form = new FormData();
-		form.append("file", file, file.name || "voiceover.wav");
+		form.append("file", uploadFile, uploadFile.name || "voiceover.wav");
 		if (language) {
 			form.append("language", language);
 		}
@@ -62,7 +64,12 @@ export async function transcribeVoiceover({
 			"No transcription backend configured. Add a Groq API key in AI panel settings.",
 		);
 	}
-	const result = await groqTranscribeAudio({ apiKey, file, language, signal });
+	const result = await groqTranscribeAudio({
+		apiKey,
+		file: uploadFile,
+		language,
+		signal,
+	});
 	return { ...result, source: "byok" };
 }
 
