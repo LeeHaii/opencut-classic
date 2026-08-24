@@ -55,6 +55,9 @@ fn main() {
                 .title("OpenCut")
                 .inner_size(1440.0, 900.0)
                 .min_inner_size(1024.0, 640.0)
+                // Let HTML5 drag-and-drop work inside the editor (media bin,
+                // timeline). The app does not use Tauri's own drag-drop events.
+                .disable_drag_drop_handler()
                 .build()?;
             let _ = window.set_focus();
             Ok(())
