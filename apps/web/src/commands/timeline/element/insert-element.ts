@@ -199,6 +199,14 @@ export class InsertElementCommand extends Command {
 			return false;
 		}
 
+		if (
+			element.type === "hyperframes" &&
+			(!element.compositionId || typeof element.html !== "string")
+		) {
+			console.error("Hyperframes element must have compositionId and html");
+			return false;
+		}
+
 		return true;
 	}
 

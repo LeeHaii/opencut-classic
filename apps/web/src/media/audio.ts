@@ -1,5 +1,6 @@
 import type {
 	AudioElement,
+	HyperframesElement,
 	VideoElement,
 	LibraryAudioElement,
 	RetimeConfig,
@@ -21,10 +22,7 @@ import { mediaSupportsAudio } from "@/media/media-utils";
 import { getSourceTimeAtClipTime, renderRetimedBuffer } from "@/retime";
 import { Input, ALL_FORMATS, BlobSource, AudioBufferSink } from "mediabunny";
 import { TICKS_PER_SECOND } from "@/wasm";
-import {
-	computeRmsBuckets,
-	type SampleBucket,
-} from "@/media/waveform-summary";
+import { computeRmsBuckets, type SampleBucket } from "@/media/waveform-summary";
 
 const MAX_AUDIO_CHANNELS = 2;
 const EXPORT_SAMPLE_RATE = 44100;
@@ -87,8 +85,23 @@ export async function decodeAudioToFloat32({
 }
 
 export interface AudibleElementCandidate {
-	element: AudioElement | VideoElement;
+	element: AudioElement | VideoElement | HyperframesElement;
 	mediaAsset: MediaAsset | null;
+}
+
+function getAudioMediaAsset({
+	element,
+	mediaMap,
+}: {
+	element: AudioElement | VideoElement | HyperframesElement;
+	mediaMap: Map<string, MediaAsset>;
+}): MediaAsset | null {
+	if (element.type === "hyperframes") {
+		return element.renderedMediaId
+			? (mediaMap.get(element.renderedMediaId) ?? null)
+			: null;
+	}
+	return hasMediaId(element) ? (mediaMap.get(element.mediaId) ?? null) : null;
 }
 
 export function collectAudibleCandidates({
@@ -109,9 +122,7 @@ export function collectAudibleCandidates({
 			if (!canElementHaveAudio(element)) continue;
 			if (element.duration <= 0) continue;
 
-			const mediaAsset = hasMediaId(element)
-				? (mediaMap.get(element.mediaId) ?? null)
-				: null;
+			const mediaAsset = getAudioMediaAsset({ element, mediaMap });
 			if (!doesElementHaveEnabledAudio({ element, mediaAsset })) continue;
 
 			candidates.push({ element, mediaAsset });
@@ -177,7 +188,7 @@ export async function collectAudioElements({
 			continue;
 		}
 
-		if (element.type === "video") {
+		if (element.type === "video" || element.type === "hyperframes") {
 			if (!mediaAsset || !mediaSupportsAudio({ media: mediaAsset })) continue;
 
 			pendingElements.push(
@@ -199,7 +210,7 @@ export async function collectAudioElements({
 							localTime: 0,
 						}),
 						muted: isElementMuted({ element }),
-						retime: element.retime,
+						retime: element.type === "video" ? element.retime : undefined,
 					};
 				}),
 			);
@@ -453,7 +464,7 @@ function collectMediaAudioSource({
 		trimStart: element.trimStart / TICKS_PER_SECOND,
 		trimEnd: element.trimEnd / TICKS_PER_SECOND,
 		volume,
-		retime: element.retime,
+		retime: "retime" in element ? element.retime : undefined,
 	};
 }
 
@@ -479,7 +490,7 @@ function collectMediaAudioClip({
 		trimEnd: element.trimEnd / TICKS_PER_SECOND,
 		volume,
 		muted,
-		retime: element.retime,
+		retime: "retime" in element ? element.retime : undefined,
 	};
 }
 
@@ -503,9 +514,7 @@ export async function collectAudioMixSources({
 		for (const element of track.elements) {
 			if (!canElementHaveAudio(element)) continue;
 			if (isElementMuted({ element })) continue;
-			const mediaAsset = hasMediaId(element)
-				? (mediaMap.get(element.mediaId) ?? null)
-				: null;
+			const mediaAsset = getAudioMediaAsset({ element, mediaMap });
 			if (!doesElementHaveEnabledAudio({ element, mediaAsset })) continue;
 			const volume = resolveEffectiveAudioGain({
 				element,
@@ -528,7 +537,7 @@ export async function collectAudioMixSources({
 				continue;
 			}
 
-			if (element.type === "video") {
+			if (element.type === "video" || element.type === "hyperframes") {
 				if (mediaAsset && mediaSupportsAudio({ media: mediaAsset })) {
 					audioMixSources.push(
 						collectMediaAudioSource({ element, mediaAsset, volume }),
@@ -566,9 +575,7 @@ export async function collectAudioClips({
 		for (const element of track.elements) {
 			if (!canElementHaveAudio(element)) continue;
 
-			const mediaAsset = hasMediaId(element)
-				? (mediaMap.get(element.mediaId) ?? null)
-				: null;
+			const mediaAsset = getAudioMediaAsset({ element, mediaMap });
 			if (!doesElementHaveEnabledAudio({ element, mediaAsset })) continue;
 
 			const muted = isTrackMuted || isElementMuted({ element });
@@ -599,7 +606,7 @@ export async function collectAudioClips({
 				continue;
 			}
 
-			if (element.type === "video") {
+			if (element.type === "video" || element.type === "hyperframes") {
 				if (mediaAsset && mediaSupportsAudio({ media: mediaAsset })) {
 					clips.push(
 						collectMediaAudioClip({

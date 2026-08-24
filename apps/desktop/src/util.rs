@@ -2,6 +2,7 @@
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::Duration;
+use tauri::Manager;
 
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;
@@ -11,7 +12,12 @@ pub const CREATE_NEW_CONSOLE: u32 = 0x0010;
 
 /// Builds a process command without a shell. `console` requests a visible
 /// terminal (interactive login flows); everything else runs windowless.
-pub fn build_command(executable: &Path, args: &[String], cwd: Option<&Path>, console: bool) -> Command {
+pub fn build_command(
+    executable: &Path,
+    args: &[String],
+    cwd: Option<&Path>,
+    console: bool,
+) -> Command {
     let mut command = Command::new(executable);
     command
         .args(args)
@@ -47,13 +53,21 @@ pub struct CaptureOutput {
 }
 
 /// Runs a short-lived command capturing output with a hard timeout.
-pub fn capture_with_timeout(executable: &Path, args: &[&str], timeout: Duration) -> Option<CaptureOutput> {
+pub fn capture_with_timeout(
+    executable: &Path,
+    args: &[&str],
+    timeout: Duration,
+) -> Option<CaptureOutput> {
     use std::io::Read;
     use std::sync::mpsc;
     use std::thread;
 
     let mut command = Command::new(executable);
-    command.args(args).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
+    command
+        .args(args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
     hide_window(&mut command);
     let mut child = command.spawn().ok()?;
     let mut out_pipe = child.stdout.take()?;
@@ -72,7 +86,10 @@ pub fn capture_with_timeout(executable: &Path, args: &[&str], timeout: Duration)
     });
     let deadline = std::time::Instant::now() + timeout;
     loop {
-        if let (Ok(stdout), Ok(stderr)) = (out_rx.recv_timeout(Duration::from_millis(50)), err_rx.try_recv()) {
+        if let (Ok(stdout), Ok(stderr)) = (
+            out_rx.recv_timeout(Duration::from_millis(50)),
+            err_rx.try_recv(),
+        ) {
             let status = child.try_wait().ok().flatten();
             return Some(CaptureOutput {
                 success: status.is_some_and(|s| s.success()),
@@ -81,9 +98,17 @@ pub fn capture_with_timeout(executable: &Path, args: &[&str], timeout: Duration)
             });
         }
         if let Ok(Some(status)) = child.try_wait() {
-            let stdout = out_rx.recv_timeout(Duration::from_secs(2)).unwrap_or_default();
-            let stderr = err_rx.recv_timeout(Duration::from_secs(2)).unwrap_or_default();
-            return Some(CaptureOutput { success: status.success(), stdout, stderr });
+            let stdout = out_rx
+                .recv_timeout(Duration::from_secs(2))
+                .unwrap_or_default();
+            let stderr = err_rx
+                .recv_timeout(Duration::from_secs(2))
+                .unwrap_or_default();
+            return Some(CaptureOutput {
+                success: status.success(),
+                stdout,
+                stderr,
+            });
         }
         if std::time::Instant::now() >= deadline {
             let _ = child.kill();
@@ -128,30 +153,59 @@ pub fn resolve_node() -> Option<PathBuf> {
     }
     if cfg!(windows) {
         let candidates = [
-            std::env::var("ProgramFiles").ok().map(|v| PathBuf::from(v).join("nodejs").join("node.exe")),
-            std::env::var("LocalAppData").ok().map(|v| PathBuf::from(v).join("Programs").join("nodejs").join("node.exe")),
+            std::env::var("ProgramFiles")
+                .ok()
+                .map(|v| PathBuf::from(v).join("nodejs").join("node.exe")),
+            std::env::var("LocalAppData").ok().map(|v| {
+                PathBuf::from(v)
+                    .join("Programs")
+                    .join("nodejs")
+                    .join("node.exe")
+            }),
         ];
         candidates.into_iter().flatten().find(|p| p.is_file())
     } else {
-        ["/usr/local/bin/node", "/usr/bin/node", "/opt/homebrew/bin/node"]
-            .iter()
-            .map(PathBuf::from)
-            .find(|p| p.is_file())
+        [
+            "/usr/local/bin/node",
+            "/usr/bin/node",
+            "/opt/homebrew/bin/node",
+        ]
+        .iter()
+        .map(PathBuf::from)
+        .find(|p| p.is_file())
     }
 }
 
-/// Resolves the bundled hyperframes CLI script. Dev: apps/desktop/node_modules.
-/// Packaged: resources directory next to the executable.
-pub fn resolve_hyperframes_cli() -> Option<PathBuf> {
+/// Resolves the HyperFrames CLI script. Workspace installs are usually hoisted
+/// to the repository-level node_modules; packaged builds stage a self-contained
+/// dependency tree under the Tauri resource directory.
+pub fn resolve_hyperframes_cli(app: &tauri::AppHandle) -> Option<PathBuf> {
     if let Ok(path) = std::env::var("HYPERFRAMES_CLI_PATH") {
         let p = PathBuf::from(path);
         if p.is_file() {
             return Some(p);
         }
     }
-    let relative = PathBuf::from("node_modules").join("hyperframes").join("bin").join("hyperframes.mjs");
+    let relative = PathBuf::from("node_modules")
+        .join("hyperframes")
+        .join("bin")
+        .join("hyperframes.mjs");
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let mut candidates = vec![manifest_dir.join(&relative)];
+    let mut candidates = vec![
+        manifest_dir.join(&relative),
+        manifest_dir.join("../..").join(&relative),
+    ];
+    if let Ok(resource_dir) = app.path().resource_dir() {
+        candidates.push(resource_dir.join("hyperframes-cli").join(&relative));
+        // Compatibility with early packages that copied only the CLI package.
+        candidates.push(
+            resource_dir
+                .join("hyperframes-cli")
+                .join("hyperframes")
+                .join("bin")
+                .join("hyperframes.mjs"),
+        );
+    }
     if let Ok(exe) = std::env::current_exe() {
         if let Some(exe_dir) = exe.parent() {
             candidates.push(exe_dir.join(&relative));
@@ -159,6 +213,7 @@ pub fn resolve_hyperframes_cli() -> Option<PathBuf> {
                 exe_dir
                     .join("resources")
                     .join("hyperframes-cli")
+                    .join("node_modules")
                     .join("hyperframes")
                     .join("bin")
                     .join("hyperframes.mjs"),
@@ -173,13 +228,20 @@ pub fn kill_tree(pid: u32) {
     #[cfg(windows)]
     {
         let mut cmd = Command::new("taskkill");
-        cmd.args(["/PID".to_string(), pid.to_string(), "/T".to_string(), "/F".to_string()]);
+        cmd.args([
+            "/PID".to_string(),
+            pid.to_string(),
+            "/T".to_string(),
+            "/F".to_string(),
+        ]);
         hide_window(&mut cmd);
         let _ = cmd.output();
     }
     #[cfg(not(windows))]
     {
         let _ = Command::new("kill").arg(pid.to_string()).output();
-        let _ = Command::new("pkill").args(["-TERM", "-P", &pid.to_string()]).output();
+        let _ = Command::new("pkill")
+            .args(["-TERM", "-P", &pid.to_string()])
+            .output();
     }
 }

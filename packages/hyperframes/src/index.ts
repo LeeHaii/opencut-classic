@@ -1,10 +1,14 @@
-export type { AgentTurn, AgentChatMessage, AntigravityStatus } from "./types.js";
+export type {
+	AgentTurn,
+	AgentChatMessage,
+	AntigravityStatus,
+} from "./types";
 export {
 	DEFAULT_ANTIGRAVITY_MODELS,
 	MIN_ANTIGRAVITY_VERSION,
-} from "./models.js";
-export { buildAgentPrompt, buildSeedComposition } from "./prompt.js";
-export { extractHtml, quickValidate } from "./extract.js";
+} from "./models";
+export { buildAgentPrompt, buildSeedComposition } from "./prompt";
+export { extractHtml, quickValidate } from "./extract";
 export {
 	isNative,
 	nativeInvoke,
@@ -16,11 +20,25 @@ export {
 	onHfRenderDone,
 	onHfRenderError,
 	onStudioHtmlChanged,
-} from "./native.js";
+} from "./native";
+export type {
+	AgentRunRequest,
+	AgentDonePayload,
+	AgentChunkPayload,
+	HfRenderRequest,
+	StudioOpenRequest,
+	StudioOpenResult,
+	StudioHtmlChangedPayload,
+	StudioAppendResult,
+} from "./native";
 export {
 	INTERNAL_MEDIA_SCHEME,
 	internalMediaUrl,
 	parseInternalMediaUrl,
-} from "./media-url.js";
-export { preparePreviewHtml, PREVIEW_MESSAGE_SOURCE } from "./prepare-preview.js";
-export { previewBridgeSource } from "./bridge-source.js";
+} from "./media-url";
+export {
+	preparePreviewHtml,
+	PREVIEW_MESSAGE_SOURCE,
+	PARENT_MESSAGE_SOURCE,
+} from "./prepare-preview";
+export { previewBridgeSource } from "./bridge-source";

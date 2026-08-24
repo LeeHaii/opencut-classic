@@ -1,11 +1,18 @@
 import { isRecord, recordArray } from "./json";
 
 const GROQ_CHAT_URL = "https://api.groq.com/openai/v1/chat/completions";
+const GROQ_MODELS_URL = "https://api.groq.com/openai/v1/models";
 const GROQ_TRANSCRIBE_URL =
 	"https://api.groq.com/openai/v1/audio/transcriptions";
 
-export const GROQ_PLANNER_MODEL = "llama-3.1-8b-instant";
+export const GROQ_PLANNER_MODEL = "openai/gpt-oss-120b";
 export const GROQ_WHISPER_MODEL = "whisper-large-v3-turbo";
+
+const CHAT_MODEL_PREFERENCES = [
+	GROQ_PLANNER_MODEL,
+	"openai/gpt-oss-20b",
+	"qwen/qwen3.6-27b",
+] as const;
 
 interface GroqChatOptions {
 	apiKey: string;
@@ -14,6 +21,54 @@ interface GroqChatOptions {
 	userMessage: string;
 	temperature?: number;
 	signal?: AbortSignal;
+}
+
+function parseGroqModelIds(data: unknown): string[] {
+	if (!isRecord(data) || !Array.isArray(data.data)) return [];
+	return data.data.flatMap((entry) =>
+		isRecord(entry) && typeof entry.id === "string" ? [entry.id] : [],
+	);
+}
+
+async function discoverGroqChatModel({
+	apiKey,
+	exclude,
+	signal,
+}: {
+	apiKey: string;
+	exclude?: string;
+	signal?: AbortSignal;
+}): Promise<string | null> {
+	const response = await fetch(GROQ_MODELS_URL, {
+		headers: { Authorization: `Bearer ${apiKey}` },
+		signal,
+	});
+	if (!response.ok) return null;
+	const available = new Set(parseGroqModelIds(await response.json()));
+	for (const preferred of CHAT_MODEL_PREFERENCES) {
+		if (preferred !== exclude && available.has(preferred)) return preferred;
+	}
+	return (
+		Array.from(available).find(
+			(id) =>
+				id !== exclude &&
+				!id.toLowerCase().includes("whisper") &&
+				!id.toLowerCase().includes("guard"),
+		) ?? null
+	);
+}
+
+function isUnavailableModelError({
+	status,
+	message,
+}: {
+	status: number;
+	message: string | null;
+}): boolean {
+	return (
+		status === 404 ||
+		(status === 400 && Boolean(message?.toLowerCase().includes("model")))
+	);
 }
 
 /** Safely pulls `choices[0].message.content` out of an unknown payload. */
@@ -35,14 +90,21 @@ export function extractErrorMessage(data: unknown): string | null {
 }
 
 /** JSON-mode chat completion against Groq. */
-export async function groqChatJson({
+async function groqChat({
 	apiKey,
-	model = GROQ_PLANNER_MODEL,
+	model,
 	systemPrompt,
 	userMessage,
-	temperature = 0.15,
+	temperature,
 	signal,
-}: GroqChatOptions): Promise<string> {
+	jsonMode,
+	allowModelFallback = true,
+}: GroqChatOptions & {
+	model: string;
+	temperature: number;
+	jsonMode: boolean;
+	allowModelFallback?: boolean;
+}): Promise<string> {
 	const response = await fetch(GROQ_CHAT_URL, {
 		method: "POST",
 		headers: {
@@ -52,7 +114,7 @@ export async function groqChatJson({
 		body: JSON.stringify({
 			model,
 			temperature,
-			response_format: { type: "json_object" },
+			...(jsonMode ? { response_format: { type: "json_object" } } : {}),
 			messages: [
 				{ role: "system", content: systemPrompt },
 				{ role: "user", content: userMessage },
@@ -63,15 +125,76 @@ export async function groqChatJson({
 
 	const data: unknown = await response.json();
 	if (!response.ok) {
-		throw new Error(
-			extractErrorMessage(data) ?? `Groq request failed (${response.status})`,
-		);
+		const message = extractErrorMessage(data);
+		if (
+			allowModelFallback &&
+			isUnavailableModelError({ status: response.status, message })
+		) {
+			const fallback = await discoverGroqChatModel({
+				apiKey,
+				exclude: model,
+				signal,
+			});
+			if (fallback) {
+				return groqChat({
+					apiKey,
+					model: fallback,
+					systemPrompt,
+					userMessage,
+					temperature,
+					signal,
+					jsonMode,
+					allowModelFallback: false,
+				});
+			}
+		}
+		throw new Error(message ?? `Groq request failed (${response.status})`);
 	}
 	const content = extractChatContent(data);
 	if (!content) {
 		throw new Error("Groq returned an empty completion");
 	}
 	return content;
+}
+
+/** JSON-mode chat completion against Groq with model discovery fallback. */
+export async function groqChatJson({
+	apiKey,
+	model = GROQ_PLANNER_MODEL,
+	systemPrompt,
+	userMessage,
+	temperature = 0.15,
+	signal,
+}: GroqChatOptions): Promise<string> {
+	return groqChat({
+		apiKey,
+		model,
+		systemPrompt,
+		userMessage,
+		temperature,
+		signal,
+		jsonMode: true,
+	});
+}
+
+/** Text chat completion used by browser-native HyperFrames generation. */
+export async function groqChatText({
+	apiKey,
+	model = GROQ_PLANNER_MODEL,
+	systemPrompt,
+	userMessage,
+	temperature = 0.2,
+	signal,
+}: GroqChatOptions): Promise<string> {
+	return groqChat({
+		apiKey,
+		model,
+		systemPrompt,
+		userMessage,
+		temperature,
+		signal,
+		jsonMode: false,
+	});
 }
 
 export interface GroqTranscriptionWord {

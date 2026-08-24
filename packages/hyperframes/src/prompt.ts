@@ -1,4 +1,4 @@
-import type { AgentChatMessage } from "./types.js";
+import type { AgentChatMessage } from "./types";
 
 export interface PromptContext {
 	request: string

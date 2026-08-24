@@ -1,7 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import { extractHtml, quickValidate } from "../src/extract.js";
 import { buildSeedComposition, buildAgentPrompt } from "../src/prompt.js";
-import { preparePreviewHtml, PREVIEW_MESSAGE_SOURCE } from "../src/prepare-preview.js";
+import {
+	preparePreviewHtml,
+	PREVIEW_MESSAGE_SOURCE,
+} from "../src/prepare-preview.js";
 import { internalMediaUrl, parseInternalMediaUrl } from "../src/media-url.js";
 
 const sample = (id: string) => `<!DOCTYPE html><html><body>
@@ -15,7 +18,9 @@ describe("extractHtml", () => {
 	});
 
 	test("falls back to a doctype document", () => {
-		expect(extractHtml(`noise ${sample("b2")} more`)).toContain('data-composition-id="b2"');
+		expect(extractHtml(`noise ${sample("b2")} more`)).toContain(
+			'data-composition-id="b2"',
+		);
 	});
 
 	test("returns null without the marker", () => {
@@ -26,12 +31,19 @@ describe("extractHtml", () => {
 describe("quickValidate", () => {
 	test("extracts layout facts", () => {
 		const info = quickValidate(sample("c3"));
-		expect(info).toMatchObject({ compositionId: "c3", durationSecs: 3, width: 1920, height: 1080 });
+		expect(info).toMatchObject({
+			compositionId: "c3",
+			durationSecs: 3,
+			width: 1920,
+			height: 1080,
+		});
 		expect(info?.isMaster).toBe(false);
 	});
 
 	test("rejects oversized html", () => {
-		expect(quickValidate(`x`.repeat(1_100_000) + `data-composition-id`)).toBeNull();
+		expect(
+			quickValidate(`x`.repeat(1_100_000) + `data-composition-id`),
+		).toBeNull();
 	});
 });
 
@@ -53,7 +65,14 @@ describe("prompt + seed", () => {
 			width: 1280,
 			height: 720,
 			fps: 30,
-			recentTurns: [{ id: "1", role: "user", text: "make it red", createdAt: new Date().toISOString() }],
+			recentTurns: [
+				{
+					id: "1",
+					role: "user",
+					text: "make it red",
+					createdAt: new Date().toISOString(),
+				},
+			],
 		});
 		expect(prompt).toContain('id="s1"');
 		expect(prompt).toContain("USER: make it red");
@@ -65,12 +84,16 @@ describe("preparePreviewHtml", () => {
 	test("appends bridge and strips nothing from source", () => {
 		const prepared = preparePreviewHtml(sample("d4"));
 		expect(prepared).toContain(PREVIEW_MESSAGE_SOURCE);
+		expect(prepared).toContain('data.action === "snapshot"');
+		expect(prepared).toContain('post("snapshot"');
 		expect(prepared).toContain("</body>");
 	});
 
 	test("replaces cdn gsap when inline source provided", () => {
 		const html = `<html><head><script src="https://cdn.jsdelivr.net/npm/gsap@3/dist/gsap.min.js"><\/script></head>${sample("e5")}`;
-		const prepared = preparePreviewHtml(html, { gsapSource: "window.__gsapInline = true;" });
+		const prepared = preparePreviewHtml(html, {
+			gsapSource: "window.__gsapInline = true;",
+		});
 		expect(prepared).toContain("__gsapInline");
 		expect(prepared).not.toContain("cdn.jsdelivr.net/npm/gsap");
 	});

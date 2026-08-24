@@ -6,7 +6,7 @@ const DEFAULT_STEP_SECONDS = 1 / 60;
 
 export type AudioCapableElement = Extract<
 	TimelineElement,
-	{ type: "audio" | "video" }
+	{ type: "audio" | "video" | "hyperframes" }
 >;
 
 export function clampDb(value: number): number {

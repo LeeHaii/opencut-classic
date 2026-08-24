@@ -11,6 +11,7 @@ import {
 	GraphicNode,
 	type ResolvedGraphicNodeState,
 } from "../nodes/graphic-node";
+import { HyperframesNode } from "../nodes/hyperframes-node";
 import { ImageNode } from "../nodes/image-node";
 import { RootNode } from "../nodes/root-node";
 import { StickerNode } from "../nodes/sticker-node";
@@ -182,7 +183,8 @@ async function collectNode({
 		node instanceof VideoNode ||
 		node instanceof ImageNode ||
 		node instanceof StickerNode ||
-		node instanceof GraphicNode
+		node instanceof GraphicNode ||
+		node instanceof HyperframesNode
 	) {
 		await collectVisualSourceNode({
 			node,
@@ -212,7 +214,7 @@ async function collectVisualSourceNode({
 	items,
 	textures,
 }: {
-	node: VideoNode | ImageNode | StickerNode | GraphicNode;
+	node: VideoNode | ImageNode | StickerNode | GraphicNode | HyperframesNode;
 	renderer: CanvasRenderer;
 	path: string;
 	items: FrameItemDescriptor[];
@@ -242,7 +244,10 @@ async function collectVisualSourceNode({
 	if (graphicSize) {
 		sourceWidth = graphicSize.width;
 		sourceHeight = graphicSize.height;
-	} else if ("sourceWidth" in node.resolved && "sourceHeight" in node.resolved) {
+	} else if (
+		"sourceWidth" in node.resolved &&
+		"sourceHeight" in node.resolved
+	) {
 		sourceWidth = node.resolved.sourceWidth;
 		sourceHeight = node.resolved.sourceHeight;
 	} else {
@@ -386,7 +391,7 @@ function buildMaskArtifacts({
 	transform,
 	textures,
 }: {
-	node: VideoNode | ImageNode | StickerNode | GraphicNode;
+	node: VideoNode | ImageNode | StickerNode | GraphicNode | HyperframesNode;
 	renderer: CanvasRenderer;
 	path: string;
 	transform: QuadTransformDescriptor;

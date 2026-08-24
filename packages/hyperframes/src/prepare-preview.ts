@@ -1,4 +1,4 @@
-import { previewBridgeSource } from "./bridge-source.js";
+import { previewBridgeSource } from "./bridge-source";
 
 export const PREVIEW_MESSAGE_SOURCE = "opencut-hf-preview";
 export const PARENT_MESSAGE_SOURCE = "hf-parent";

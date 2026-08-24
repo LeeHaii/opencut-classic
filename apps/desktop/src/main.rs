@@ -48,7 +48,9 @@ fn main() {
         ])
         .setup(|app| {
             let url = editor_url();
-            let parsed: tauri::Url = url.parse().map_err(|e| format!("invalid editor url: {e}"))?;
+            let parsed: tauri::Url = url
+                .parse()
+                .map_err(|e| format!("invalid editor url: {e}"))?;
             let window = WebviewWindowBuilder::new(app, "main", WebviewUrl::External(parsed))
                 .title("OpenCut")
                 .inner_size(1440.0, 900.0)

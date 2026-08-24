@@ -1,4 +1,7 @@
-use crate::scan::{find_matching_close, find_tag_with_attr, get_tag_attribute, remove_tag_attribute, set_tag_attribute};
+use crate::scan::{
+    find_matching_close, find_tag_with_attr, get_tag_attribute, remove_tag_attribute,
+    set_tag_attribute,
+};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 
@@ -64,7 +67,14 @@ pub fn validate_composition(html: &str) -> Result<CompositionInfo, CompositionEr
     let is_master = tag.contains(MASTER_MARKER);
     let child_count = html.matches("data-composition-src").count();
 
-    Ok(CompositionInfo { composition_id, duration_secs: duration, width, height, is_master, child_count })
+    Ok(CompositionInfo {
+        composition_id,
+        duration_secs: duration,
+        width,
+        height,
+        is_master,
+        child_count,
+    })
 }
 
 /// Extracts the composition HTML document from an agent reply. Prefers a
@@ -79,7 +89,10 @@ pub fn extract_html(text: &str) -> Option<String> {
             }
         }
     }
-    if let Some(start) = text.find("<!DOCTYPE html").or_else(|| text.find("<!doctype html")) {
+    if let Some(start) = text
+        .find("<!DOCTYPE html")
+        .or_else(|| text.find("<!doctype html"))
+    {
         if let Some(end_rel) = text[start..].rfind("</html>") {
             let end = start + end_rel + "</html>".len();
             let doc = &text[start..end];
@@ -234,7 +247,8 @@ pub fn append_child_to_master(
         return Err(AppendError::NotMaster);
     }
     let child_info = validate_composition(normalized_child)?;
-    let master_root = find_tag_with_attr(master_html, MASTER_MARKER, None).ok_or(AppendError::MissingRoot)?;
+    let master_root =
+        find_tag_with_attr(master_html, MASTER_MARKER, None).ok_or(AppendError::MissingRoot)?;
 
     // Next sequential slot.
     let index_re =
@@ -261,8 +275,14 @@ pub fn append_child_to_master(
     .expect("static regex");
     let mut max_end = master_duration;
     for caps in host_re.captures_iter(master_html) {
-        let start: f64 = caps.get(2).and_then(|m| m.as_str().parse().ok()).unwrap_or(0.0);
-        let dur: f64 = caps.get(3).and_then(|m| m.as_str().parse().ok()).unwrap_or(0.0);
+        let start: f64 = caps
+            .get(2)
+            .and_then(|m| m.as_str().parse().ok())
+            .unwrap_or(0.0);
+        let dur: f64 = caps
+            .get(3)
+            .and_then(|m| m.as_str().parse().ok())
+            .unwrap_or(0.0);
         max_end = max_end.max(start + dur);
     }
     let host_start = max_end;
@@ -290,7 +310,8 @@ pub fn append_child_to_master(
     updated.push_str(&master_html[insertion_abs..]);
 
     // Extend master duration.
-    let updated_root = find_tag_with_attr(&updated, MASTER_MARKER, None).ok_or(AppendError::MissingRoot)?;
+    let updated_root =
+        find_tag_with_attr(&updated, MASTER_MARKER, None).ok_or(AppendError::MissingRoot)?;
     let tag = &updated[updated_root.range.clone()];
     let extended = set_tag_attribute(tag, "data-duration", &format_duration(total_duration));
     updated.replace_range(updated_root.range, &extended);
@@ -352,7 +373,8 @@ mod tests {
         assert!(!normalized.contains("\"chat-1\""));
         assert!(normalized.contains("opencut-abc123"));
         assert!(normalized.contains("opencut-abc123-title"));
-        let root = find_tag_with_attr(&normalized, "data-composition-id", Some("opencut-abc123")).unwrap();
+        let root =
+            find_tag_with_attr(&normalized, "data-composition-id", Some("opencut-abc123")).unwrap();
         let tag = &normalized[root.range.clone()];
         assert_eq!(get_tag_attribute(tag, "data-start").as_deref(), Some("0"));
         assert_eq!(get_tag_attribute(tag, "data-track-index"), None);

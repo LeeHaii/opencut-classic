@@ -44,7 +44,10 @@ pub fn find_tag_with_attr(html: &str, attr: &str, value: Option<&str>) -> Option
                 }
             }
             None => {
-                return Some(TagSpan { range: open..close_rel + 1, content_start: close_rel + 1 })
+                return Some(TagSpan {
+                    range: open..close_rel + 1,
+                    content_start: close_rel + 1,
+                });
             }
         }
     }
@@ -121,12 +124,16 @@ pub fn remove_tag_attribute(tag: &str, name: &str) -> String {
         }
         let after_eq = rest_trimmed[1..].trim_start();
         let eq_ws = rest_trimmed.len() - 1 - after_eq.len();
-        let Some(quote) = after_eq.chars().next() else { continue };
+        let Some(quote) = after_eq.chars().next() else {
+            continue;
+        };
         if quote != '"' && quote != '\'' {
             continue;
         }
         let value_part = &after_eq[1..];
-        let Some(end) = value_part.find(quote) else { continue };
+        let Some(end) = value_part.find(quote) else {
+            continue;
+        };
         let remove_start = abs - ws_before;
         let remove_end = abs + name.len() + ws_before + 1 + eq_ws + 1 + end + 2;
         let mut out = String::with_capacity(tag.len());
@@ -154,7 +161,13 @@ pub fn find_matching_close(html: &str, root: &TagSpan) -> Option<usize> {
                 }
                 if html[i..].starts_with("<div") || html[i..].starts_with("<DIV") {
                     let next = *bytes.get(i + 4).unwrap_or(&b'>');
-                    if next.is_ascii_alphabetic() || next == b'>' || next == b' ' || next == b'\n' || next == b'\t' || next == b'\r' {
+                    if next.is_ascii_alphabetic()
+                        || next == b'>'
+                        || next == b' '
+                        || next == b'\n'
+                        || next == b'\t'
+                        || next == b'\r'
+                    {
                         depth += 1;
                     }
                 } else if html[i..].starts_with("</div") || html[i..].starts_with("</DIV") {
@@ -180,7 +193,10 @@ mod tests {
     fn finds_and_edits_attributes() {
         let html = r#"<div id="stage" data-composition-id="abc" data-duration="5"><p>hi</p></div>"#;
         let tag = find_tag_with_attr(html, "data-composition-id", Some("abc")).unwrap();
-        assert_eq!(get_tag_attribute(&html[tag.range.clone()], "data-duration").unwrap(), "5");
+        assert_eq!(
+            get_tag_attribute(&html[tag.range.clone()], "data-duration").unwrap(),
+            "5"
+        );
 
         let edited = set_tag_attribute(&html[tag.range.clone()], "data-width", "1280");
         assert!(edited.contains(r#"data-width="1280""#));

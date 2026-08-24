@@ -123,14 +123,17 @@ pub fn meets_minimum_version(version: &str) -> bool {
 pub fn probe_status(executable: &Path) -> AntigravityStatus {
     let output = run_with_timeout(executable, &["--version"], Duration::from_secs(8));
     let stdout = output.as_deref().unwrap_or_default();
-    let version = stdout.lines().find_map(|line| {
-        version_numbers(line).map(|_| line.trim().to_string())
-    });
+    let version = stdout
+        .lines()
+        .find_map(|line| version_numbers(line).map(|_| line.trim().to_string()));
     let account = account_from_output(stdout);
     AntigravityStatus {
         installed: true,
         executable_path: executable.to_string_lossy().into_owned().into(),
-        minimum_version_met: version.as_deref().map(meets_minimum_version).unwrap_or(false),
+        minimum_version_met: version
+            .as_deref()
+            .map(meets_minimum_version)
+            .unwrap_or(false),
         version,
         account_email: account.email,
         account_plan: account.plan,
@@ -212,7 +215,11 @@ fn as_nonempty_string(value: &serde_json::Value) -> Option<String> {
     }
 }
 
-fn find_first_string(value: &serde_json::Value, key_pattern: &Regex, min_len: usize) -> Option<String> {
+fn find_first_string(
+    value: &serde_json::Value,
+    key_pattern: &Regex,
+    min_len: usize,
+) -> Option<String> {
     match value {
         serde_json::Value::Object(map) => {
             for (key, inner) in map {
@@ -224,9 +231,12 @@ fn find_first_string(value: &serde_json::Value, key_pattern: &Regex, min_len: us
                     }
                 }
             }
-            map.values().find_map(|inner| find_first_string(inner, key_pattern, min_len))
+            map.values()
+                .find_map(|inner| find_first_string(inner, key_pattern, min_len))
         }
-        serde_json::Value::Array(items) => items.iter().find_map(|i| find_first_string(i, key_pattern, min_len)),
+        serde_json::Value::Array(items) => items
+            .iter()
+            .find_map(|i| find_first_string(i, key_pattern, min_len)),
         _ => None,
     }
 }
@@ -264,7 +274,9 @@ pub fn parse_stream_json(raw: &str) -> ParsedTurn {
         }
     }
 
-    let conversation_id = events.iter().find_map(|event| find_first_string(event, &id_re, 4));
+    let conversation_id = events
+        .iter()
+        .find_map(|event| find_first_string(event, &id_re, 4));
     let usage = events.iter().find_map(find_usage);
 
     let mut finals: Vec<String> = Vec::new();
@@ -304,7 +316,12 @@ pub fn parse_stream_json(raw: &str) -> ParsedTurn {
         (raw.trim().to_string(), true)
     };
 
-    ParsedTurn { text, conversation_id, usage, fallback_text }
+    ParsedTurn {
+        text,
+        conversation_id,
+        usage,
+        fallback_text,
+    }
 }
 
 /// Scrapes account email/plan from CLI output (JSON lines or human banner).
@@ -324,7 +341,9 @@ pub fn account_from_output(raw: &str) -> AccountInfo {
         if trimmed.is_empty() {
             continue;
         }
-        let Ok(value) = serde_json::from_str::<serde_json::Value>(trimmed) else { continue };
+        let Ok(value) = serde_json::from_str::<serde_json::Value>(trimmed) else {
+            continue;
+        };
         if email.is_none() {
             email = find_first_string(&value, &email_key_re, 3).filter(|s| email_re.is_match(s));
         }
@@ -360,14 +379,20 @@ pub fn extract_error(stdout_raw: &str, stderr_raw: &str) -> String {
         if trimmed.is_empty() || !trimmed.starts_with('{') {
             continue;
         }
-        let Ok(value) = serde_json::from_str::<serde_json::Value>(trimmed) else { continue };
+        let Ok(value) = serde_json::from_str::<serde_json::Value>(trimmed) else {
+            continue;
+        };
         let candidates = [
             value.pointer("/result/error"),
             value.pointer("/error/message"),
             value.pointer("/error"),
             value.pointer("/message"),
         ];
-        if let Some(message) = candidates.into_iter().flatten().find_map(as_nonempty_string) {
+        if let Some(message) = candidates
+            .into_iter()
+            .flatten()
+            .find_map(as_nonempty_string)
+        {
             return message;
         }
     }
@@ -434,7 +459,10 @@ mod tests {
     #[test]
     fn extracts_error_prefers_stderr() {
         assert_eq!(extract_error("{\"error\":\"x\"}", "boom"), "boom");
-        assert_eq!(extract_error("{\"result\":{\"error\":\"no quota\"}}", ""), "no quota");
+        assert_eq!(
+            extract_error("{\"result\":{\"error\":\"no quota\"}}", ""),
+            "no quota"
+        );
         assert_eq!(extract_error("", "  "), extract_error("", ""));
     }
 }

@@ -1,14 +1,14 @@
 # HyperFrames CLI resources
 
-At packaging time, copy the installed CLI into this directory so the bundled
-app can find it:
+At packaging time, `script/stage-hyperframes-cli.mjs` copies the installed CLI
+and its production dependency closure into this directory. Tauri then bundles
+that self-contained Node dependency tree as `hyperframes-cli` resources.
 
 ```powershell
-# from apps/desktop, after `bun install`
-Copy-Item -Recurse -Force ..\..\node_modules\hyperframes .\resources\hyperframes-cli\hyperframes
+node script/stage-hyperframes-cli.mjs
 ```
 
 `resolve_hyperframes_cli()` looks for
-`resources/hyperframes-cli/hyperframes/bin/hyperframes.mjs` next to the
-executable. In dev builds the CLI is resolved from
-`apps/desktop/node_modules/hyperframes` instead.
+`$RESOURCE/hyperframes-cli/node_modules/hyperframes/bin/hyperframes.mjs`. In
+workspace development the resolver also supports Bun/npm-hoisted dependencies
+from the repository-level `node_modules`.

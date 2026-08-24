@@ -34,10 +34,15 @@ import {
 	bookmarkNotesPreviewOverlay,
 	getBookmarkPreviewOverlaySource,
 } from "@/timeline/bookmarks/index";
+import { getHyperframesPreviewOverlaySource } from "@/hyperframes/preview-overlay";
+import { usePlaybackTime } from "@/hyperframes/use-playback-time";
 
 export default function Editor() {
 	const params = useParams();
-	const projectId = params.project_id as string;
+	const projectIdParam = params.project_id;
+	const projectId = Array.isArray(projectIdParam)
+		? (projectIdParam[0] ?? "")
+		: (projectIdParam ?? "");
 
 	return (
 		<MobileGate>
@@ -84,7 +89,10 @@ function EditorLayout() {
 	const activeScene = useEditor((editor) =>
 		editor.scenes.getActiveSceneOrNull(),
 	);
-	const currentTime = useEditor((editor) => editor.playback.getCurrentTime());
+	const currentTime = usePlaybackTime();
+	const canvasSize = useEditor(
+		(editor) => editor.project.getActive()?.settings.canvasSize,
+	);
 	const activeGuide = usePreviewStore((state) => state.activeGuide);
 	const overlays = usePreviewStore((state) => state.overlays);
 	const setOverlayVisibility = usePreviewStore(
@@ -112,9 +120,16 @@ function EditorLayout() {
 								definitions: [bookmarkNotesPreviewOverlay],
 								instances: [],
 							},
+					activeScene && canvasSize
+						? getHyperframesPreviewOverlaySource({
+								tracks: activeScene.tracks,
+								timelineTime: currentTime,
+								projectCanvasSize: canvasSize,
+							})
+						: { definitions: [], instances: [] },
 				],
 			}),
-		[activeGuide, activeScene, currentTime, showBookmarkNotes],
+		[activeGuide, activeScene, canvasSize, currentTime, showBookmarkNotes],
 	);
 
 	const overlayControls = useMemo(

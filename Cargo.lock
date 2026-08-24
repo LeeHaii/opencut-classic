@@ -4999,13 +4999,6 @@ dependencies = [
 name = "opencut-desktop"
 version = "0.1.0"
 dependencies = [
- "gpui",
-]
-
-[[package]]
-name = "opencut-desktop-tauri"
-version = "0.1.0"
-dependencies = [
  "hyperframes",
  "serde",
  "serde_json",
@@ -5013,6 +5006,13 @@ dependencies = [
  "tauri-build",
  "tauri-plugin-fs",
  "tauri-plugin-single-instance",
+]
+
+[[package]]
+name = "opencut-desktop-gpui"
+version = "0.1.0"
+dependencies = [
+ "gpui",
 ]
 
 [[package]]
