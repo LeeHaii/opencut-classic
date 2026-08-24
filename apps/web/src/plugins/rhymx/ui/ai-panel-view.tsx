@@ -364,9 +364,11 @@ export function AiPanelView() {
 							<div className="flex min-w-0 flex-1 flex-col gap-1">
 								<Label className="text-[11px]">Language</Label>
 								<Select
-									value={store.language}
+									value={store.language || "auto"}
 									onValueChange={(value) =>
-										store.setLanguage({ language: value })
+										store.setLanguage({
+											language: value === "auto" ? "" : value,
+										})
 									}
 									disabled={busy}
 								>
@@ -377,7 +379,7 @@ export function AiPanelView() {
 										{TRANSCRIPTION_LANGUAGES.map((language) => (
 											<SelectItem
 												key={language.code || "auto"}
-												value={language.code}
+												value={language.code || "auto"}
 											>
 												{language.label}
 											</SelectItem>
