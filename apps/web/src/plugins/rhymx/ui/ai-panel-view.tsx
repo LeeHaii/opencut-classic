@@ -18,12 +18,15 @@ import { Switch } from "@/components/ui/switch";
 import { useEditor } from "@/editor/use-editor";
 import type { MediaAsset } from "@/media/types";
 import type { SceneTracks, TimelineElement, TimelineTrack } from "@/timeline";
+import { frameRateToFloat } from "@/fps/utils";
+import { AlertTriangle, CheckCircle2, RefreshCw, Sparkles } from "lucide-react";
 import { toast } from "sonner";
 import type { PlanScene, StockCandidate, StockProviderId } from "../types";
 import { buildCaptionCues } from "../captions/modes";
 import { extractKeywords } from "../ai/keyword-heuristics";
 import { planScenes } from "../ai/plan-client";
 import { transcribeVoiceover } from "../ai/transcribe";
+import { generateMotionSceneHtml } from "../ai/motion-generator";
 import {
 	segmentTranscriptSegments,
 	segmentWords,
@@ -31,6 +34,8 @@ import {
 import { applyPlan, findSceneCandidates } from "../orchestrator";
 import { listRhymxTemplates, suggestTemplateForScene } from "../motion/library";
 import { useRhymxStore } from "../state/rhymx-store";
+
+const MOTION_CONCURRENCY = 2;
 
 function segmentFromWords(
 	words: Array<{ word: string; start: number; end: number }>,
@@ -64,11 +69,23 @@ export function AiPanelView() {
 	const busy =
 		store.step === "transcribing" ||
 		store.step === "planning" ||
+		store.step === "generating" ||
 		store.step === "matching" ||
 		store.step === "applying";
 
 	const mediaScenes = useMemo(
 		() => store.scenes.filter((scene) => scene.treatment === "media"),
+		[store.scenes],
+	);
+
+	const pendingMotionSceneIds = useMemo(
+		() =>
+			store.scenes
+				.filter(
+					(scene) =>
+						scene.treatment === "motion" && scene.motionStatus !== "ready",
+				)
+				.map((scene) => scene.id),
 		[store.scenes],
 	);
 
@@ -190,6 +207,97 @@ export function AiPanelView() {
 		}
 		await analyzeVoiceover(file);
 	}, [activeOption, analyzeVoiceover, mediaAssets, tracks]);
+
+	/**
+	 * Generates HyperFrames motion scenes for the given planned scenes with
+	 * bounded concurrency. Falls back to the selected template at apply time
+	 * for scenes that end up not ready.
+	 */
+	const handleGenerateMotion = useCallback(
+		async ({ sceneIds }: { sceneIds: string[] }) => {
+			const settings = editor.project.getActiveOrNull()?.settings;
+			const projectId = editor.project.getActiveOrNull()?.metadata.id;
+			if (!settings || !projectId || sceneIds.length === 0) return;
+
+			const width = settings.canvasSize.width;
+			const height = settings.canvasSize.height;
+			const fps = Math.round(frameRateToFloat(settings.fps));
+			const apiKey = useRhymxStore.getState().keys.groq || undefined;
+
+			store.setStep({ step: "generating" });
+			store.setStatusMessage({ message: null });
+
+			const scenesById = new Map(
+				useRhymxStore.getState().scenes.map((scene) => [scene.id, scene]),
+			);
+			const queue = sceneIds
+				.map((sceneId) => scenesById.get(sceneId))
+				.filter((scene): scene is PlanScene => Boolean(scene));
+
+			let cursor = 0;
+			const worker = async () => {
+				while (cursor < queue.length) {
+					const scene = queue[cursor];
+					cursor += 1;
+					if (!scene) return;
+
+					useRhymxStore.getState().updateScene({
+						sceneId: scene.id,
+						patch: { motionStatus: "generating", motionError: undefined },
+					});
+					try {
+						const { html } = await generateMotionSceneHtml({
+							scene: {
+								sceneNumber: scene.sceneNumber,
+								visualIntent: scene.visualIntent,
+								keywords: scene.keywords,
+								transcriptText: scene.transcriptText,
+								durationSec: scene.durationSec,
+							},
+							context: { projectId, width, height, fps, apiKey },
+						});
+						useRhymxStore.getState().updateScene({
+							sceneId: scene.id,
+							patch: { motionStatus: "ready", motionHtml: html },
+						});
+					} catch (error) {
+						useRhymxStore.getState().updateScene({
+							sceneId: scene.id,
+							patch: {
+								motionStatus: "failed",
+								motionError:
+									error instanceof Error
+										? error.message
+										: "Motion generation failed",
+							},
+						});
+					}
+				}
+			};
+
+			try {
+				await Promise.all(
+					Array.from(
+						{ length: Math.min(MOTION_CONCURRENCY, queue.length) },
+						() => worker(),
+					),
+				);
+				const failed = useRhymxStore
+					.getState()
+					.scenes.filter((scene) => scene.motionStatus === "failed").length;
+				if (failed > 0) {
+					toast.warning(`${failed} motion scene(s) failed to generate`, {
+						description: "Those scenes will use their selected template.",
+					});
+				} else {
+					toast.success("AI motion scenes ready");
+				}
+			} finally {
+				useRhymxStore.getState().setStep({ step: "reviewing" });
+			}
+		},
+		[editor, store],
+	);
 
 	const handleFindMatches = useCallback(async () => {
 		const providers: StockProviderId[] = [
@@ -435,13 +543,26 @@ export function AiPanelView() {
 							</Button>
 							<Button
 								className="flex-1"
+								variant="outline"
+								onClick={() =>
+									void handleGenerateMotion({
+										sceneIds: pendingMotionSceneIds,
+									})
+								}
+								disabled={busy || pendingMotionSceneIds.length === 0}
+							>
+								<Sparkles className="size-3.5" />
+								Generate motion
+							</Button>
+							<Button
+								className="flex-1"
 								onClick={() => void handleApply()}
 								disabled={busy || !readyToApply}
 							>
 								Apply to timeline
 							</Button>
 						</div>
-						<SceneReviewList />
+						<SceneReviewList onGenerateMotion={handleGenerateMotion} />
 						<div className="mt-2 flex flex-col gap-2 border-t pt-3">
 							<CaptionOptions />
 							<div className="flex gap-2">
@@ -451,6 +572,19 @@ export function AiPanelView() {
 									disabled={busy || mediaScenes.length === 0}
 								>
 									Find stock matches
+								</Button>
+								<Button
+									className="flex-1"
+									variant="outline"
+									onClick={() =>
+										void handleGenerateMotion({
+											sceneIds: pendingMotionSceneIds,
+										})
+									}
+									disabled={busy || pendingMotionSceneIds.length === 0}
+								>
+									<Sparkles className="size-3.5" />
+									Generate motion
 								</Button>
 								<Button
 									className="flex-1"
@@ -480,6 +614,8 @@ function stepLabel(step: string): string {
 			return "Transcribing voiceover…";
 		case "planning":
 			return "Planning visuals…";
+		case "generating":
+			return "Generating AI motion scenes…";
 		case "matching":
 			return "Searching stock libraries…";
 		case "applying":
@@ -519,19 +655,33 @@ function SettingsSection() {
 	);
 }
 
-function SceneReviewList() {
+function SceneReviewList({
+	onGenerateMotion,
+}: {
+	onGenerateMotion: (args: { sceneIds: string[] }) => Promise<void>;
+}) {
 	const scenes = useRhymxStore((state) => state.scenes);
 
 	return (
 		<div className="flex flex-col gap-2">
 			{scenes.map((scene) => (
-				<SceneCard key={scene.id} scene={scene} />
+				<SceneCard
+					key={scene.id}
+					scene={scene}
+					onGenerateMotion={onGenerateMotion}
+				/>
 			))}
 		</div>
 	);
 }
 
-function SceneCard({ scene }: { scene: PlanScene }) {
+function SceneCard({
+	scene,
+	onGenerateMotion,
+}: {
+	scene: PlanScene;
+	onGenerateMotion: (args: { sceneIds: string[] }) => Promise<void>;
+}) {
 	const store = useRhymxStore();
 
 	return (
@@ -603,26 +753,32 @@ function SceneCard({ scene }: { scene: PlanScene }) {
 			</p>
 
 			{scene.treatment === "motion" && (
-				<Select
-					value={scene.templateId ?? ""}
-					onValueChange={(value) =>
-						store.updateScene({
-							sceneId: scene.id,
-							patch: { templateId: value },
-						})
-					}
-				>
-					<SelectTrigger className="h-7 text-[11px]">
-						<SelectValue placeholder="Template" />
-					</SelectTrigger>
-					<SelectContent>
-						{listRhymxTemplates().map((meta) => (
-							<SelectItem key={meta.id} value={meta.id}>
-								{meta.name}
-							</SelectItem>
-						))}
-					</SelectContent>
-				</Select>
+				<>
+					<Select
+						value={scene.templateId ?? ""}
+						onValueChange={(value) =>
+							store.updateScene({
+								sceneId: scene.id,
+								patch: { templateId: value },
+							})
+						}
+					>
+						<SelectTrigger className="h-7 text-[11px]">
+							<SelectValue placeholder="Fallback template" />
+						</SelectTrigger>
+						<SelectContent>
+							{listRhymxTemplates().map((meta) => (
+								<SelectItem key={meta.id} value={meta.id}>
+									{meta.name}
+								</SelectItem>
+							))}
+						</SelectContent>
+					</Select>
+					<MotionGenerationRow
+						scene={scene}
+						onGenerate={() => void onGenerateMotion({ sceneIds: [scene.id] })}
+					/>
+				</>
 			)}
 
 			{scene.treatment === "media" && scene.candidates.length > 0 && (
@@ -651,6 +807,83 @@ function SceneCard({ scene }: { scene: PlanScene }) {
 	);
 }
 
+function MotionGenerationRow({
+	scene,
+	onGenerate,
+}: {
+	scene: PlanScene;
+	onGenerate: () => void;
+}) {
+	const status = scene.motionStatus ?? "idle";
+
+	if (status === "generating") {
+		return (
+			<div className="text-muted-foreground flex items-center gap-1.5 text-[11px]">
+				<Spinner className="size-3" />
+				Generating AI motion…
+			</div>
+		);
+	}
+	if (status === "ready") {
+		return (
+			<div className="flex items-center justify-between gap-2">
+				<span className="flex items-center gap-1.5 text-[11px] text-emerald-600">
+					<CheckCircle2 className="size-3" />
+					AI motion scene ready
+				</span>
+				<Button
+					variant="ghost"
+					size="sm"
+					className="h-5 rounded px-1.5 text-[9px]"
+					onClick={onGenerate}
+				>
+					<RefreshCw className="size-2.5" />
+					Regenerate
+				</Button>
+			</div>
+		);
+	}
+	if (status === "failed") {
+		return (
+			<div className="flex flex-col gap-1">
+				<span className="text-destructive flex items-center gap-1.5 text-[11px]">
+					<AlertTriangle className="size-3" />
+					{scene.motionError ?? "Generation failed"}
+				</span>
+				<div className="flex items-center gap-2">
+					<Button
+						variant="outline"
+						size="sm"
+						className="h-5 rounded px-1.5 text-[9px]"
+						onClick={onGenerate}
+					>
+						Retry
+					</Button>
+					<span className="text-muted-foreground text-[10px]">
+						Falls back to the template if skipped.
+					</span>
+				</div>
+			</div>
+		);
+	}
+	return (
+		<div className="flex items-center justify-between gap-2">
+			<span className="text-muted-foreground text-[10px]">
+				Uses the fallback template unless generated.
+			</span>
+			<Button
+				variant="ghost"
+				size="sm"
+				className="text-primary h-5 rounded px-1.5 text-[9px]"
+				onClick={onGenerate}
+			>
+				<Sparkles className="size-2.5" />
+				Generate with AI
+			</Button>
+		</div>
+	);
+}
+
 function CandidateThumb({
 	candidate,
 	selected,
@@ -660,11 +893,18 @@ function CandidateThumb({
 	selected: boolean;
 	onSelect: () => void;
 }) {
+	const setPreviewCandidate = useRhymxStore(
+		(state) => state.setPreviewCandidate,
+	);
+
 	return (
 		<button
 			type="button"
-			onClick={onSelect}
-			title={`${candidate.provider}${candidate.creator ? ` · ${candidate.creator}` : ""}`}
+			onClick={() => {
+				onSelect();
+				setPreviewCandidate({ candidate });
+			}}
+			title={`Select · click to preview on the right${candidate.creator ? ` · ${candidate.creator}` : ""}`}
 			className={`overflow-hidden rounded border-2 transition-colors ${
 				selected ? "border-primary" : "border-transparent hover:border-border"
 			}`}
@@ -675,6 +915,7 @@ function CandidateThumb({
 					alt={candidate.id}
 					className="aspect-video w-full object-cover"
 					referrerPolicy="no-referrer"
+					loading="lazy"
 				/>
 			) : (
 				<span className="text-muted-foreground flex aspect-video items-center justify-center text-[9px]">

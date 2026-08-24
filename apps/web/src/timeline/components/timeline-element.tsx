@@ -1,6 +1,7 @@
 "use client";
 
 import { createContext, useContext } from "react";
+import { Replace } from "lucide-react";
 import { useEditor } from "@/editor/use-editor";
 import { useAssetsPanelStore } from "@/components/editor/panels/assets/assets-panel-store";
 import { AudioWaveform, WAVEFORM_GAIN_SAMPLE_COUNT } from "./audio-waveform";
@@ -554,8 +555,7 @@ function ElementInner({
 }) {
 	const visibleElement = displayElement ?? element;
 	const isReducedOpacity =
-		(canElementBeHidden(visibleElement) && visibleElement.hidden) ||
-		isDropTarget;
+		canElementBeHidden(visibleElement) && visibleElement.hidden;
 	return (
 		<div
 			className="absolute top-0 bottom-0"
@@ -567,13 +567,23 @@ function ElementInner({
 			<div
 				className="absolute inset-0 rounded-sm"
 				style={
-					isSelected
+					isDropTarget
 						? {
-								boxShadow: `0 0 0 ${ELEMENT_RING_WIDTH_PX}px var(--primary)`,
+								boxShadow: `0 0 0 ${ELEMENT_RING_WIDTH_PX}px #10b981`,
 							}
-						: undefined
+						: isSelected
+							? {
+									boxShadow: `0 0 0 ${ELEMENT_RING_WIDTH_PX}px var(--primary)`,
+								}
+							: undefined
 				}
 			>
+				{isDropTarget && (
+					<span className="bg-emerald-600 text-white pointer-events-none absolute left-1/2 top-1 z-10 flex -translate-x-1/2 items-center gap-0.5 rounded px-1.5 py-0.5 text-[9px] font-medium leading-none">
+						<Replace className="size-2.5" />
+						Replace
+					</span>
+				)}
 				<div
 					className={cn(
 						"absolute inset-0 overflow-hidden rounded-sm",

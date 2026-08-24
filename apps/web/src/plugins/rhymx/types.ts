@@ -49,18 +49,19 @@ export interface PlannedScene {
 	treatment: RhymxTreatment;
 }
 
-export type MatchStatus =
-	| "idle"
-	| "searching"
-	| "ready"
-	| "failed"
-	| "skipped";
+export type MatchStatus = "idle" | "searching" | "ready" | "failed" | "skipped";
+
+export type MotionGenerationStatus = "idle" | "generating" | "ready" | "failed";
 
 export interface PlanScene extends SceneDraft, PlannedScene {
 	templateId?: string;
 	candidates: StockCandidate[];
 	selectedCandidateId: string | null;
 	matchStatus: MatchStatus;
+	/** AI-generated HyperFrames scene (preferred over templateId when ready). */
+	motionStatus?: MotionGenerationStatus;
+	motionHtml?: string;
+	motionError?: string;
 }
 
 export type CaptionMode = "sentence" | "phrase" | "word" | "keywords";

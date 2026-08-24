@@ -286,9 +286,8 @@ function MediaAssetDraggable({
 				type: "media",
 				mediaType: item.type,
 				name: item.name,
-				...(item.type !== "audio" && {
-					targetElementTypes: [...MASKABLE_ELEMENT_TYPES],
-				}),
+				targetElementTypes:
+					item.type === "audio" ? ["audio"] : [...MASKABLE_ELEMENT_TYPES],
 			}}
 			shouldShowPlusOnDrag={false}
 			onAddToTimeline={({ currentTime }) =>

@@ -4,12 +4,12 @@ import {
 	BatchCommand,
 	InsertElementCommand,
 } from "@/commands";
-import { buildGraphicElement, buildElementFromMedia } from "@/timeline/element-utils";
 import {
-	mediaTimeFromSeconds,
-	ZERO_MEDIA_TIME,
-	type MediaTime,
-} from "@/wasm";
+	buildHyperframesElement,
+	buildGraphicElement,
+	buildElementFromMedia,
+} from "@/timeline/element-utils";
+import { mediaTimeFromSeconds, ZERO_MEDIA_TIME, type MediaTime } from "@/wasm";
 import type { ElementAnimations, ScalarAnimationKey } from "@/animation/types";
 import { buildSubtitleTextElement } from "@/subtitles/build-subtitle-text-element";
 import type { SubtitleCue } from "@/subtitles/types";
@@ -66,37 +66,67 @@ export async function applyPlan({
 		let sceneDurationSec = scene.durationSec;
 		let insertedSomething = false;
 
-		if (scene.treatment === "motion" && scene.templateId) {
-			const template = getRhymxTemplate({ templateId: scene.templateId });
-			if (template) {
-				sceneDurationSec = Math.min(
-					sceneDurationSec,
-					template.meta.defaultDurationSec,
-				);
-				if (graphicTrackId === null) {
-					const trackCommand = new AddTrackCommand({ type: "graphic" });
-					graphicTrackId = trackCommand.getTrackId();
-					commands.push(trackCommand);
-				}
-				const element = buildGraphicElement({
-					definitionId: template.definition.id,
-					name: template.meta.name,
+		if (scene.treatment === "motion") {
+			if (
+				scene.motionStatus === "ready" &&
+				scene.motionHtml &&
+				scene.motionHtml.trim().length > 0
+			) {
+				// AI-generated HyperFrames scene (preferred).
+				const canvasSize = editor.project.getActive().settings.canvasSize;
+				const element = buildHyperframesElement({
+					compositionId: sanitizeCompositionId(scene.id),
+					html: scene.motionHtml,
+					name:
+						scene.visualIntent.slice(0, 60) || `Motion #${scene.sceneNumber}`,
 					startTime,
+					duration: mediaTimeFromSeconds({ seconds: scene.durationSec }),
+					width: canvasSize.width,
+					height: canvasSize.height,
 				});
-				element.duration = mediaTimeFromSeconds({ seconds: sceneDurationSec });
 				commands.push(
 					new InsertElementCommand({
 						element,
-						placement: { mode: "explicit", trackId: graphicTrackId },
+						placement: { mode: "auto" },
 					}),
 				);
 				insertedTemplates += 1;
 				insertedSomething = true;
+			} else if (scene.templateId) {
+				const template = getRhymxTemplate({ templateId: scene.templateId });
+				if (template) {
+					sceneDurationSec = Math.min(
+						sceneDurationSec,
+						template.meta.defaultDurationSec,
+					);
+					if (graphicTrackId === null) {
+						const trackCommand = new AddTrackCommand({ type: "graphic" });
+						graphicTrackId = trackCommand.getTrackId();
+						commands.push(trackCommand);
+					}
+					const element = buildGraphicElement({
+						definitionId: template.definition.id,
+						name: template.meta.name,
+						startTime,
+					});
+					element.duration = mediaTimeFromSeconds({
+						seconds: sceneDurationSec,
+					});
+					commands.push(
+						new InsertElementCommand({
+							element,
+							placement: { mode: "explicit", trackId: graphicTrackId },
+						}),
+					);
+					insertedTemplates += 1;
+					insertedSomething = true;
+				}
 			}
 		} else if (scene.selectedCandidateId) {
 			const candidate =
-				scene.candidates.find((item) => item.id === scene.selectedCandidateId) ??
-				null;
+				scene.candidates.find(
+					(item) => item.id === scene.selectedCandidateId,
+				) ?? null;
 			if (candidate) {
 				const acquired = await acquirer.acquire({ editor, candidate });
 				if (candidate.durationSec != null && candidate.kind === "video") {
@@ -138,14 +168,21 @@ export async function applyPlan({
 	}
 
 	let insertedCaptions = 0;
-	if (options.captionCues && options.captionCues.length > 0 && !options.signal?.aborted) {
+	if (
+		options.captionCues &&
+		options.captionCues.length > 0 &&
+		!options.signal?.aborted
+	) {
 		const textTrackCommand = new AddTrackCommand({ type: "text", index: 0 });
 		const canvasSize = editor.project.getActive().settings.canvasSize;
 		commands.unshift(textTrackCommand);
 		options.captionCues.forEach((cue, index) => {
 			commands.push(
 				new InsertElementCommand({
-					placement: { mode: "explicit", trackId: textTrackCommand.getTrackId() },
+					placement: {
+						mode: "explicit",
+						trackId: textTrackCommand.getTrackId(),
+					},
 					element: buildSubtitleTextElement({
 						index,
 						caption: cue,
@@ -173,13 +210,21 @@ function kenBurnsAnimation({
 		"transform.scaleX": {
 			keys: [
 				scalarKey({ time: ZERO_MEDIA_TIME, value: 1, isLast: false }),
-				scalarKey({ time: mediaTimeFromSeconds({ seconds: durationSec }), value: 1.12, isLast: true }),
+				scalarKey({
+					time: mediaTimeFromSeconds({ seconds: durationSec }),
+					value: 1.12,
+					isLast: true,
+				}),
 			],
 		},
 		"transform.scaleY": {
 			keys: [
 				scalarKey({ time: ZERO_MEDIA_TIME, value: 1, isLast: false }),
-				scalarKey({ time: mediaTimeFromSeconds({ seconds: durationSec }), value: 1.12, isLast: true }),
+				scalarKey({
+					time: mediaTimeFromSeconds({ seconds: durationSec }),
+					value: 1.12,
+					isLast: true,
+				}),
 			],
 		},
 	};
@@ -245,4 +290,9 @@ export async function findSceneCandidates({
 
 function tokenize(query: string): string[] {
 	return query.toLowerCase().split(/\s+/).filter(Boolean);
+}
+
+function sanitizeCompositionId(sceneId: string): string {
+	const clean = sceneId.replace(/[^a-zA-Z0-9-]/g, "");
+	return `rhymx-${clean || "scene"}`;
 }
