@@ -40,6 +40,10 @@ export async function POST(request: Request) {
 	upstream.append("file", file, file.name || "voiceover.wav");
 	upstream.append("model", WHISPER_MODEL);
 	upstream.append("response_format", "verbose_json");
+	const language = form.get("language");
+	if (typeof language === "string" && /^[a-zA-Z]{2,8}$/.test(language)) {
+		upstream.append("language", language);
+	}
 	upstream.append("timestamp_granularities[]", "word");
 	upstream.append("timestamp_granularities[]", "segment");
 

@@ -12,9 +12,11 @@ import {
 	CheckCircle2,
 	ExternalLink,
 	Film,
+	ImagePlus,
 	SendHorizontal,
 	Sparkles,
 	UserRound,
+	X,
 } from "lucide-react";
 import { toast } from "sonner";
 import {
@@ -162,7 +164,13 @@ export function AiMotionPanelView() {
 		});
 	};
 
-	const handleSend = async (request: string) => {
+	const handleSend = async ({
+		request,
+		images = [],
+	}: {
+		request: string;
+		images?: string[];
+	}) => {
 		const entry = resolvedActiveElementId
 			? findEntry({ editor, elementId: resolvedActiveElementId })
 			: null;
@@ -178,6 +186,7 @@ export function AiMotionPanelView() {
 			role: "user",
 			text: request,
 			createdAt: new Date().toISOString(),
+			...(images.length > 0 ? { images } : {}),
 		};
 		store.appendChat({ elementId: element.id, message: userMessage });
 
@@ -222,6 +231,7 @@ export function AiMotionPanelView() {
 						prompt,
 						conversationId: element.agent?.conversationId ?? undefined,
 						model: store.model || undefined,
+						...(images.length > 0 ? { images } : {}),
 					},
 				});
 				return;
@@ -232,6 +242,7 @@ export function AiMotionPanelView() {
 			const text = await runBrowserHyperframesAgent({
 				prompt,
 				apiKey: loadApiKeys().groq || undefined,
+				images,
 				signal: controller.signal,
 			});
 			const html = extractHtml(text);
@@ -331,9 +342,10 @@ export function AiMotionPanelView() {
 			useHyperframesPanelStore.getState().runs[entry.element.id]?.running ??
 			false;
 		if (hasHtml && !isRunning) {
-			void handleSend(
-				`Change the total composition duration to exactly ${formatLengthLabel(nextSecs)} seconds. Keep the existing visual style and content, and retime or extend every clip so the animation fills the full duration.`,
-			);
+			void handleSend({
+				request:
+					`Change the total composition duration to exactly ${formatLengthLabel(nextSecs)} seconds. Keep the existing visual style and content, and retime or extend every clip so the animation fills the full duration.`,
+			});
 		}
 	};
 
@@ -757,7 +769,9 @@ export function AiMotionPanelView() {
 
 						<PromptInput
 							disabled={run?.running || (native && !status?.installed)}
-							onSubmit={(value) => void handleSend(value)}
+							onSubmit={({ value, images }) =>
+								void handleSend({ request: value, images })
+							}
 						/>
 
 						{nativeActionError && (
@@ -968,6 +982,18 @@ function ChatHistory({ messages }: { messages: AgentChatMessage[] }) {
 								)}
 							>
 								{message.text}
+								{message.images && message.images.length > 0 && (
+									<div className="mt-1 flex flex-wrap gap-1">
+										{message.images.map((src, index) => (
+											<img
+												key={`${message.id}-image-${index}`}
+												src={src}
+												alt={`Reference ${index + 1}`}
+												className="size-12 rounded border border-current/20 object-cover"
+											/>
+										))}
+									</div>
+								)}
 							</div>
 						</div>
 					</div>
@@ -977,19 +1003,60 @@ function ChatHistory({ messages }: { messages: AgentChatMessage[] }) {
 	);
 }
 
+interface AttachmentImage {
+	id: string;
+	dataUrl: string;
+}
+
 function PromptInput({
 	disabled,
 	onSubmit,
 }: {
 	disabled: boolean;
-	onSubmit: (value: string) => void;
+	onSubmit: (args: { value: string; images: string[] }) => void;
 }) {
 	const [value, setValue] = useState("");
+	const [images, setImages] = useState<AttachmentImage[]>([]);
+	const fileInputRef = useRef<HTMLInputElement>(null);
+
+	const addFiles = useCallback(async (files: FileList | File[] | null) => {
+		if (!files) return;
+		const accepted: AttachmentImage[] = [];
+		for (const file of Array.from(files)) {
+			if (!file.type.startsWith("image/")) continue;
+			if (file.size > MAX_ATTACHMENT_BYTES) {
+				toast.error(`"${file.name}" exceeds the ${MAX_ATTACHMENT_MB} MB image limit`);
+				continue;
+			}
+			try {
+				accepted.push({
+					id: newId(),
+					dataUrl: await readFileAsDataUrl(file),
+				});
+			} catch {
+				toast.error(`Could not read "${file.name}"`);
+			}
+		}
+		if (accepted.length > 0) {
+			setImages((current) =>
+				[...current, ...accepted].slice(0, MAX_ATTACHMENTS),
+			);
+		}
+	}, []);
+
+	const removeImage = (id: string) => {
+		setImages((current) => current.filter((image) => image.id !== id));
+	};
+
 	const submit = () => {
 		const trimmed = value.trim();
-		if (!trimmed) return;
-		onSubmit(trimmed);
+		if (!trimmed && images.length === 0) return;
+		onSubmit({
+			value: trimmed || defaultRequestForImages(images.length),
+			images: images.map((image) => image.dataUrl),
+		});
 		setValue("");
+		setImages([]);
 	};
 	return (
 		<form
@@ -999,10 +1066,40 @@ function PromptInput({
 				submit();
 			}}
 		>
+			{images.length > 0 && (
+				<div className="mb-1 flex flex-wrap gap-1">
+					{images.map((image) => (
+						<div key={image.id} className="group relative">
+							<img
+								src={image.dataUrl}
+								alt="Reference attachment"
+								className="border-border/60 size-11 rounded border object-cover"
+							/>
+							<button
+								type="button"
+								aria-label="Remove attachment"
+								className="bg-foreground text-background absolute -top-1 -right-1 flex size-3.5 items-center justify-center rounded-full opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100"
+								onClick={() => removeImage(image.id)}
+							>
+								<X className="size-2" />
+							</button>
+						</div>
+					))}
+				</div>
+			)}
 			<Textarea
 				value={value}
 				placeholder="Describe what to create or change…"
 				onChange={(event) => setValue(event.target.value)}
+				onPaste={(event) => {
+					const files = Array.from(event.clipboardData.files).filter((file) =>
+						file.type.startsWith("image/"),
+					);
+					if (files.length > 0) {
+						event.preventDefault();
+						void addFiles(files);
+					}
+				}}
 				onKeyDown={(event) => {
 					if (event.key === "Enter" && !event.shiftKey) {
 						event.preventDefault();
@@ -1012,15 +1109,39 @@ function PromptInput({
 				className="bg-transparent min-h-11 resize-none border-0 p-1 text-[11px] shadow-none focus-visible:border-0"
 				disabled={disabled}
 			/>
+			<input
+				ref={fileInputRef}
+				type="file"
+				accept="image/*"
+				multiple
+				className="hidden"
+				onChange={(event) => {
+					void addFiles(event.target.files);
+					event.target.value = "";
+				}}
+			/>
 			<div className="mt-0.5 flex items-center justify-between gap-2">
-				<span className="text-muted-foreground pl-0.5 text-[9px]">
-					Shift + Enter for a new line
-				</span>
+				<div className="flex min-w-0 items-center gap-1">
+					<Button
+						type="button"
+						variant="ghost"
+						size="sm"
+						className="text-muted-foreground h-6.5 w-6.5 shrink-0 rounded px-0"
+						aria-label="Attach reference image"
+						disabled={disabled || images.length >= MAX_ATTACHMENTS}
+						onClick={() => fileInputRef.current?.click()}
+					>
+						<ImagePlus className="size-3.5" />
+					</Button>
+					<span className="text-muted-foreground truncate pl-0.5 text-[9px]">
+						Shift + Enter for a new line · paste or attach images
+					</span>
+				</div>
 				<Button
 					type="submit"
 					size="sm"
 					className="h-6.5 px-2 text-[10px]"
-					disabled={disabled || !value.trim()}
+					disabled={disabled || (!value.trim() && images.length === 0)}
 				>
 					<SendHorizontal className="size-3" />
 					Send
@@ -1087,6 +1208,25 @@ const DEFAULT_SCENE_DURATION_SECS = 5;
 const MIN_SCENE_LENGTH_SECS = 0.5;
 const MAX_SCENE_LENGTH_SECS = 600;
 const LENGTH_EPSILON_SECS = 0.001;
+
+// --- Chat attachments -----------------------------------------------------------
+
+const MAX_ATTACHMENTS = 4;
+const MAX_ATTACHMENT_MB = 6;
+const MAX_ATTACHMENT_BYTES = MAX_ATTACHMENT_MB * 1024 * 1024;
+
+function readFileAsDataUrl(file: File): Promise<string> {
+	return new Promise((resolve, reject) => {
+		const reader = new FileReader();
+		reader.onload = () => resolve(String(reader.result));
+		reader.onerror = () => reject(reader.error ?? new Error("read failed"));
+		reader.readAsDataURL(file);
+	});
+}
+
+function defaultRequestForImages(count: number): string {
+	return `Use the attached reference image${count === 1 ? "" : "s"} as the visual ground truth and create or restyle the scene to match ${count === 1 ? "it" : "them"}.`;
+}
 
 function nextUniqueSceneName(existingNames: string[]): string {
 	const base = "AI scene";

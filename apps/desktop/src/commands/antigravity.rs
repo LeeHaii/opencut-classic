@@ -22,6 +22,9 @@ pub struct AntigravityRunRequest {
     #[serde(rename = "conversationId")]
     pub conversation_id: Option<String>,
     pub model: Option<String>,
+    /// Reference images as data URLs; staged into the agent workspace.
+    #[serde(default)]
+    pub images: Vec<String>,
 }
 
 #[tauri::command]
@@ -89,12 +92,23 @@ pub fn antigravity_run(
     std::fs::create_dir_all(&workspace)
         .map_err(|e| format!("failed to create agent workspace: {e}"))?;
 
+    let mut prompt = request.prompt.clone();
+    let references = stage_reference_images(&workspace, &request.images)?;
+    if !references.is_empty() {
+        prompt.push_str(
+            "\nVisual references (MANDATORY FIRST STEP — call view_file on each listed image file before writing any HTML):\n",
+        );
+        for path in &references {
+            prompt.push_str(&format!("- {path}\n"));
+        }
+    }
+
     let exe = status
         .executable_path
         .map(std::path::PathBuf::from)
         .unwrap_or_default();
     let args = agy::build_args(
-        &request.prompt,
+        &prompt,
         request.conversation_id.as_deref(),
         request.model.as_deref(),
     );
@@ -253,6 +267,58 @@ fn merge(mut value: serde_json::Value, message: &str) -> serde_json::Value {
         );
     }
     value
+}
+
+const MAX_REFERENCE_IMAGES: usize = 4;
+const MAX_REFERENCE_BYTES: usize = 6 * 1024 * 1024;
+
+/// Decodes data-URL images and writes them into `<workspace>/references`,
+/// returning absolute paths the agent can `view_file`. The web layer only
+/// ever sends inline bytes, so nothing depends on client-side file paths.
+fn stage_reference_images(
+    workspace: &std::path::Path,
+    images: &[String],
+) -> Result<Vec<String>, String> {
+    if images.is_empty() {
+        return Ok(Vec::new());
+    }
+    use base64::Engine as _;
+
+    let dir = workspace.join("references");
+    std::fs::create_dir_all(&dir)
+        .map_err(|e| format!("failed to create references directory: {e}"))?;
+
+    let mut paths = Vec::new();
+    for (index, data_url) in images.iter().take(MAX_REFERENCE_IMAGES).enumerate() {
+        let rest = data_url
+            .strip_prefix("data:")
+            .ok_or_else(|| "reference image is not a data URL".to_string())?;
+        let (meta, payload) = rest
+            .split_once(";base64,")
+            .ok_or_else(|| "reference image is missing base64 payload".to_string())?;
+        let mime = meta.split(';').next().unwrap_or("");
+        let extension = match mime {
+            "image/png" => "png",
+            "image/jpeg" | "image/jpg" => "jpg",
+            "image/webp" => "webp",
+            "image/gif" => "gif",
+            other => return Err(format!("unsupported reference image type: {other}")),
+        };
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(payload.trim())
+            .map_err(|e| format!("failed to decode reference image {index}: {e}"))?;
+        if bytes.len() > MAX_REFERENCE_BYTES {
+            return Err(format!(
+                "reference image {index} exceeds the {} MB limit",
+                MAX_REFERENCE_BYTES / (1024 * 1024)
+            ));
+        }
+        let path = dir.join(format!("ref-{index}.{extension}"));
+        std::fs::write(&path, &bytes)
+            .map_err(|e| format!("failed to write reference image {index}: {e}"))?;
+        paths.push(path.to_string_lossy().into_owned());
+    }
+    Ok(paths)
 }
 
 fn remove_run_from_state(app: &AppHandle, request_id: &str) {

@@ -6,6 +6,7 @@ const GROQ_TRANSCRIBE_URL =
 	"https://api.groq.com/openai/v1/audio/transcriptions";
 
 export const GROQ_PLANNER_MODEL = "openai/gpt-oss-120b";
+export const GROQ_VISION_MODEL = "meta-llama/llama-4-scout-17b-16e-instruct";
 export const GROQ_WHISPER_MODEL = "whisper-large-v3-turbo";
 
 const CHAT_MODEL_PREFERENCES = [
@@ -19,8 +20,34 @@ interface GroqChatOptions {
 	model?: string;
 	systemPrompt: string;
 	userMessage: string;
+	/** Inline image references (data URLs) appended to the user message. */
+	images?: string[];
 	temperature?: number;
 	signal?: AbortSignal;
+}
+
+type GroqUserContent =
+	| string
+	| Array<
+			| { type: "text"; text: string }
+			| { type: "image_url"; image_url: { url: string } }
+	  >;
+
+function buildUserContent({
+	text,
+	images = [],
+}: {
+	text: string;
+	images?: string[];
+}): GroqUserContent {
+	if (images.length === 0) return text;
+	return [
+		{ type: "text", text },
+		...images.map((url) => ({
+			type: "image_url" as const,
+			image_url: { url },
+		})),
+	];
 }
 
 function parseGroqModelIds(data: unknown): string[] {
@@ -95,6 +122,7 @@ async function groqChat({
 	model,
 	systemPrompt,
 	userMessage,
+	images,
 	temperature,
 	signal,
 	jsonMode,
@@ -117,7 +145,10 @@ async function groqChat({
 			...(jsonMode ? { response_format: { type: "json_object" } } : {}),
 			messages: [
 				{ role: "system", content: systemPrompt },
-				{ role: "user", content: userMessage },
+				{
+					role: "user",
+					content: buildUserContent({ text: userMessage, images }),
+				},
 			],
 		}),
 		signal,
@@ -183,14 +214,18 @@ export async function groqChatText({
 	model = GROQ_PLANNER_MODEL,
 	systemPrompt,
 	userMessage,
+	images,
 	temperature = 0.2,
 	signal,
 }: GroqChatOptions): Promise<string> {
 	return groqChat({
 		apiKey,
-		model,
+		model: images && images.length > 0 && model === GROQ_PLANNER_MODEL
+			? GROQ_VISION_MODEL
+			: model,
 		systemPrompt,
 		userMessage,
+		images,
 		temperature,
 		signal,
 		jsonMode: false,
@@ -255,17 +290,23 @@ export async function groqTranscribeAudio({
 	apiKey,
 	file,
 	model = GROQ_WHISPER_MODEL,
+	language,
 	signal,
 }: {
 	apiKey: string;
 	file: File;
 	model?: string;
+	/** ISO-639-1 language hint for more accurate transcription. */
+	language?: string;
 	signal?: AbortSignal;
 }): Promise<GroqTranscriptionResult> {
 	const form = new FormData();
 	form.append("file", file, file.name || "voiceover.wav");
 	form.append("model", model);
 	form.append("response_format", "verbose_json");
+	if (language) {
+		form.append("language", language);
+	}
 	form.append("timestamp_granularities[]", "word");
 	form.append("timestamp_granularities[]", "segment");
 

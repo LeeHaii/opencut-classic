@@ -21,6 +21,8 @@ interface RhymxStore {
 	keys: RhymxApiKeys;
 	includeCaptions: boolean;
 	captionMode: CaptionMode;
+	/** ISO-639-1 transcription hint; empty string = auto-detect. */
+	language: string;
 
 	setStep: ({ step }: { step: RhymxWizardStep }) => void;
 	setError: ({ error }: { error: string | null }) => void;
@@ -39,6 +41,7 @@ interface RhymxStore {
 	updateKey: ({ key, value }: { key: keyof RhymxApiKeys; value: string }) => void;
 	setIncludeCaptions: ({ value }: { value: boolean }) => void;
 	setCaptionMode: ({ mode }: { mode: CaptionMode }) => void;
+	setLanguage: ({ language }: { language: string }) => void;
 	reset: () => void;
 }
 
@@ -55,6 +58,7 @@ export const useRhymxStore = create<RhymxStore>()((set) => ({
 	keys: INITIAL_KEYS,
 	includeCaptions: true,
 	captionMode: "phrase",
+	language: "",
 
 	setStep: ({ step }) => set({ step }),
 	setError: ({ error }) =>
@@ -81,6 +85,7 @@ export const useRhymxStore = create<RhymxStore>()((set) => ({
 	},
 	setIncludeCaptions: ({ value }) => set({ includeCaptions: value }),
 	setCaptionMode: ({ mode }) => set({ captionMode: mode }),
+	setLanguage: ({ language }) => set({ language }),
 	reset: () =>
 		set({
 			step: "idle",

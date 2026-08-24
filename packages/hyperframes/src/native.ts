@@ -51,6 +51,8 @@ export interface AgentRunRequest {
 	prompt: string;
 	conversationId?: string;
 	model?: string;
+	/** Reference images as data URLs; the desktop layer stages them into the workspace. */
+	images?: string[];
 }
 
 export interface AgentDonePayload {

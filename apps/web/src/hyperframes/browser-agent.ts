@@ -23,18 +23,25 @@ export async function runBrowserHyperframesAgent({
 	prompt,
 	apiKey,
 	model,
+	images,
 	signal,
 }: {
 	prompt: string;
 	apiKey?: string;
 	model?: string;
+	/** Reference images as data URLs. */
+	images?: string[];
 	signal?: AbortSignal;
 }): Promise<string> {
 	try {
 		const response = await fetch("/api/hyperframes/generate", {
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ prompt, ...(model ? { model } : {}) }),
+			body: JSON.stringify({
+				prompt,
+				...(images && images.length > 0 ? { images } : {}),
+				...(model ? { model } : {}),
+			}),
 			signal,
 		});
 		const data: unknown = await response.json();
@@ -65,6 +72,7 @@ export async function runBrowserHyperframesAgent({
 		model: model || GROQ_PLANNER_MODEL,
 		systemPrompt: SYSTEM_PROMPT,
 		userMessage: prompt,
+		images,
 		temperature: 0.2,
 		signal,
 	});

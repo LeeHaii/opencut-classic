@@ -11,6 +11,8 @@ export interface AgentChatMessage {
 	role: "user" | "assistant" | "system"
 	text: string
 	createdAt: string
+	/** Inline image references (data URLs) attached to this turn. */
+	images?: string[]
 }
 
 export interface AntigravityStatus {

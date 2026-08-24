@@ -16,15 +16,21 @@ export interface RhymxTranscriptionResult extends GroqTranscriptionResult {
 export async function transcribeVoiceover({
 	file,
 	apiKey,
+	language,
 	signal,
 }: {
 	file: File;
 	apiKey?: string;
+	/** ISO-639-1 language hint for more accurate transcription. */
+	language?: string;
 	signal?: AbortSignal;
 }): Promise<RhymxTranscriptionResult> {
 	try {
 		const form = new FormData();
 		form.append("file", file, file.name || "voiceover.wav");
+		if (language) {
+			form.append("language", language);
+		}
 		const response = await fetch("/api/rhymx/transcribe", {
 			method: "POST",
 			body: form,
@@ -56,7 +62,7 @@ export async function transcribeVoiceover({
 			"No transcription backend configured. Add a Groq API key in AI panel settings.",
 		);
 	}
-	const result = await groqTranscribeAudio({ apiKey, file, signal });
+	const result = await groqTranscribeAudio({ apiKey, file, language, signal });
 	return { ...result, source: "byok" };
 }
 

@@ -16,6 +16,12 @@ import {
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { useEditor } from "@/editor/use-editor";
+import type { MediaAsset } from "@/media/types";
+import type {
+	SceneTracks,
+	TimelineElement,
+	TimelineTrack,
+} from "@/timeline";
 import { toast } from "sonner";
 import type { PlanScene, StockCandidate, StockProviderId } from "../types";
 import {
@@ -52,8 +58,15 @@ function segmentFallback(
 
 export function AiPanelView() {
 	const editor = useEditor();
+	const tracks = useEditor(
+		(current) => current.scenes.getActiveSceneOrNull()?.tracks ?? null,
+	);
+	const mediaAssets = useEditor((current) => current.media.getAssets());
 	const store = useRhymxStore();
 	const fileInputRef = useRef<HTMLInputElement>(null);
+	const [selectedAudioKey, setSelectedAudioKey] = useState<string | null>(
+		null,
+	);
 	const [showSettings, setShowSettings] = useState(false);
 
 	const busy =
@@ -67,21 +80,28 @@ export function AiPanelView() {
 		[store.scenes],
 	);
 
+	const voiceoverOptions = useMemo(() => {
+		return collectVoiceoverOptions({ tracks });
+	}, [tracks]);
+
+	const activeOption =
+		voiceoverOptions.find((option) => option.key === selectedAudioKey) ??
+		voiceoverOptions[0] ??
+		null;
+
 	const handlePickFile = useCallback(() => {
 		fileInputRef.current?.click();
 	}, []);
 
-	const handleFile = useCallback(
-		async (file: File | undefined) => {
-			if (!file) {
-				return;
-			}
+	const analyzeVoiceover = useCallback(
+		async (file: File) => {
 			store.reset();
 			store.setStep({ step: "transcribing" });
 			try {
 				const transcription = await transcribeVoiceover({
 					file,
 					apiKey: store.keys.groq || undefined,
+					language: store.language || undefined,
 				});
 				store.setStatusMessage({ message: "Planning scenes with AI…" });
 				store.setStep({ step: "planning" });
@@ -149,6 +169,35 @@ export function AiPanelView() {
 		},
 		[store],
 	);
+
+	const handleFile = useCallback(
+		async (file: File | undefined) => {
+			if (!file) {
+				return;
+			}
+			await analyzeVoiceover(file);
+		},
+		[analyzeVoiceover],
+	);
+
+	const handleGenerateFromTrack = useCallback(async () => {
+		const element = findTimelineElement({
+			tracks,
+			key: activeOption?.key ?? "",
+		});
+		if (!element) {
+			toast.error("Add an audio clip to the timeline first");
+			return;
+		}
+		const file = await resolveVoiceoverFile({ element, mediaAssets });
+		if (!file) {
+			toast.error("Could not load the audio source for that clip", {
+				description: "Re-import the asset or browse for the file instead.",
+			});
+			return;
+		}
+		await analyzeVoiceover(file);
+	}, [activeOption, analyzeVoiceover, mediaAssets, tracks]);
 
 	const handleFindMatches = useCallback(async () => {
 		const providers: StockProviderId[] = [
@@ -277,17 +326,82 @@ export function AiPanelView() {
 				{store.step === "idle" && !store.error && (
 					<div className="text-muted-foreground flex flex-col gap-2 px-1 text-xs">
 						<p>
-							Drop in a voiceover and the AI plans your video: it transcribes,
-							splits scenes, picks stock footage or motion graphics, and lays
-							everything on the timeline.
+							Pick a voiceover clip from your timeline and the AI plans your
+							video: it transcribes, splits scenes, picks stock footage or
+							motion graphics, and lays everything on the timeline.
 						</p>
 					</div>
 				)}
 
 				{(store.step === "idle" || store.step === "reviewing") && (
-					<Button onClick={handlePickFile} disabled={busy}>
-						{store.scenes.length > 0 ? "Use another voiceover" : "Choose voiceover audio"}
-					</Button>
+					<div className="flex flex-col gap-2">
+						<div className="flex flex-col gap-1">
+							<Label className="text-[11px]">Source audio</Label>
+							<Select
+								value={activeOption?.key ?? ""}
+								onValueChange={(value) => setSelectedAudioKey(value)}
+								disabled={busy || voiceoverOptions.length === 0}
+							>
+								<SelectTrigger className="h-8 text-xs">
+									<SelectValue
+										placeholder={
+											voiceoverOptions.length > 0
+												? "Select audio track"
+												: "No audio clips on the timeline"
+										}
+									/>
+								</SelectTrigger>
+								<SelectContent>
+									{voiceoverOptions.map((option) => (
+										<SelectItem key={option.key} value={option.key}>
+											{option.label}
+										</SelectItem>
+									))}
+								</SelectContent>
+							</Select>
+						</div>
+						<div className="flex items-end gap-2">
+							<div className="flex min-w-0 flex-1 flex-col gap-1">
+								<Label className="text-[11px]">Language</Label>
+								<Select
+									value={store.language}
+									onValueChange={(value) =>
+										store.setLanguage({ language: value })
+									}
+									disabled={busy}
+								>
+									<SelectTrigger className="h-8 text-xs">
+										<SelectValue placeholder="Auto-detect" />
+									</SelectTrigger>
+									<SelectContent>
+										{TRANSCRIPTION_LANGUAGES.map((language) => (
+											<SelectItem
+												key={language.code || "auto"}
+												value={language.code}
+											>
+												{language.label}
+											</SelectItem>
+										))}
+									</SelectContent>
+								</Select>
+							</div>
+							<Button
+								className="flex-1"
+								onClick={() => void handleGenerateFromTrack()}
+								disabled={busy || voiceoverOptions.length === 0}
+							>
+								{store.scenes.length > 0 ? "Re-analyze audio" : "Generate plan"}
+							</Button>
+						</div>
+						<button
+							type="button"
+							className="text-muted-foreground hover:text-foreground w-fit px-0.5 text-left text-[11px] underline-offset-2 hover:underline disabled:opacity-50"
+							onClick={handlePickFile}
+							disabled={busy}
+						>
+							…or browse an audio file instead
+						</button>
+					</div>
 				)}
 
 				{busy && (
@@ -614,4 +728,126 @@ function formatTime(seconds: number): string {
 	const minutes = Math.floor(seconds / 60);
 	const rest = Math.floor(seconds % 60);
 	return `${minutes}:${String(rest).padStart(2, "0")}`;
+}
+
+// --- Voiceover source selection -------------------------------------------------
+
+interface VoiceoverOption {
+	key: string;
+	label: string;
+}
+
+const TRANSCRIPTION_LANGUAGES: Array<{ code: string; label: string }> = [
+	{ code: "", label: "Auto-detect" },
+	{ code: "en", label: "English" },
+	{ code: "es", label: "Spanish" },
+	{ code: "fr", label: "French" },
+	{ code: "de", label: "German" },
+	{ code: "it", label: "Italian" },
+	{ code: "pt", label: "Portuguese" },
+	{ code: "nl", label: "Dutch" },
+	{ code: "pl", label: "Polish" },
+	{ code: "ru", label: "Russian" },
+	{ code: "tr", label: "Turkish" },
+	{ code: "ar", label: "Arabic" },
+	{ code: "hi", label: "Hindi" },
+	{ code: "ur", label: "Urdu" },
+	{ code: "bn", label: "Bengali" },
+	{ code: "id", label: "Indonesian" },
+	{ code: "vi", label: "Vietnamese" },
+	{ code: "th", label: "Thai" },
+	{ code: "zh", label: "Chinese" },
+	{ code: "ja", label: "Japanese" },
+	{ code: "ko", label: "Korean" },
+];
+
+function collectVoiceoverOptions({
+	tracks,
+}: {
+	tracks: SceneTracks | null;
+}): VoiceoverOption[] {
+	if (!tracks) return [];
+	const allTracks: TimelineTrack[] = [
+		...tracks.audio,
+		...tracks.overlay,
+		tracks.main,
+	];
+	const options: VoiceoverOption[] = [];
+	for (const track of allTracks) {
+		for (const element of track.elements) {
+			if (!isAudibleElement(element)) continue;
+			options.push({
+				key: `${track.id}:${element.id}`,
+				label:
+					element.name ||
+					(element.type === "video"
+						? `${track.name} video audio`
+						: track.name),
+			});
+		}
+	}
+	return options;
+}
+
+function isAudibleElement(element: TimelineElement): boolean {
+	return element.type === "audio" || element.type === "video";
+}
+
+function findTimelineElement({
+	tracks,
+	key,
+}: {
+	tracks: SceneTracks | null;
+	key: string;
+}): TimelineElement | null {
+	if (!tracks || !key) return null;
+	const [trackId, ...rest] = key.split(":");
+	const elementId = rest.join(":");
+	const allTracks: TimelineTrack[] = [
+		...tracks.audio,
+		...tracks.overlay,
+		tracks.main,
+	];
+	for (const track of allTracks) {
+		if (track.id !== trackId) continue;
+		for (const element of track.elements) {
+			if (element.id === elementId && isAudibleElement(element)) {
+				return element;
+			}
+		}
+	}
+	return null;
+}
+
+/**
+ * Resolves the actual audio bytes behind a timeline element. Uploads come
+ * straight from the media store's in-memory File; library clips are fetched
+ * into a transient File so nothing depends on a stable filesystem path.
+ */
+async function resolveVoiceoverFile({
+	element,
+	mediaAssets,
+}: {
+	element: TimelineElement;
+	mediaAssets: MediaAsset[];
+}): Promise<File | null> {
+	if ("mediaId" in element) {
+		const asset = mediaAssets.find((item) => item.id === element.mediaId);
+		return asset?.file ?? null;
+	}
+	if (element.type === "audio" && element.sourceType === "library") {
+		try {
+			const response = await fetch(element.sourceUrl);
+			if (!response.ok) return null;
+			const blob = await response.blob();
+			const name =
+				element.sourceUrl.split("/").pop()?.split("?")[0] || "voiceover";
+			return new File([blob], decodeURIComponent(name), {
+				type: blob.type || "audio/mpeg",
+			});
+		} catch {
+			return null;
+		}
+	}
+	return null;
 }

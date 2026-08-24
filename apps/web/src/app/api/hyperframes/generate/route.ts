@@ -3,11 +3,19 @@ import { z } from "zod";
 import {
 	groqChatText,
 	GROQ_PLANNER_MODEL,
+	GROQ_VISION_MODEL,
 } from "@/plugins/rhymx/ai/groq-client";
+
+const MAX_IMAGES = 4;
+const MAX_IMAGE_CHARS = 8_000_000;
 
 const requestSchema = z.object({
 	prompt: z.string().min(1).max(120_000),
 	model: z.string().min(1).max(120).optional(),
+	images: z
+		.array(z.string().startsWith("data:image/").max(MAX_IMAGE_CHARS))
+		.max(MAX_IMAGES)
+		.optional(),
 });
 
 const rateBuckets = new Map<string, number[]>();
@@ -53,15 +61,18 @@ export async function POST(request: Request) {
 	}
 
 	try {
+		const images = parsed.data.images ?? [];
 		const text = await groqChatText({
 			apiKey,
 			model:
 				parsed.data.model ??
-				process.env.GROQ_HYPERFRAMES_MODEL ??
-				GROQ_PLANNER_MODEL,
+				(images.length > 0
+					? GROQ_VISION_MODEL
+					: (process.env.GROQ_HYPERFRAMES_MODEL ?? GROQ_PLANNER_MODEL)),
 			systemPrompt:
-				"You author deterministic, seekable HyperFrames HTML. Follow every output and security constraint in the user prompt exactly.",
+				"You author deterministic, seekable HyperFrames HTML. Follow every output and security constraint in the user prompt exactly. Treat attached images as visual references to match.",
 			userMessage: parsed.data.prompt,
+			images: images.length > 0 ? images : undefined,
 			temperature: 0.2,
 		});
 		return NextResponse.json({ text });
