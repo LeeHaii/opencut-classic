@@ -17,16 +17,10 @@ import {
 import { Switch } from "@/components/ui/switch";
 import { useEditor } from "@/editor/use-editor";
 import type { MediaAsset } from "@/media/types";
-import type {
-	SceneTracks,
-	TimelineElement,
-	TimelineTrack,
-} from "@/timeline";
+import type { SceneTracks, TimelineElement, TimelineTrack } from "@/timeline";
 import { toast } from "sonner";
 import type { PlanScene, StockCandidate, StockProviderId } from "../types";
-import {
-	buildCaptionCues,
-} from "../captions/modes";
+import { buildCaptionCues } from "../captions/modes";
 import { extractKeywords } from "../ai/keyword-heuristics";
 import { planScenes } from "../ai/plan-client";
 import { transcribeVoiceover } from "../ai/transcribe";
@@ -64,9 +58,7 @@ export function AiPanelView() {
 	const mediaAssets = useEditor((current) => current.media.getAssets());
 	const store = useRhymxStore();
 	const fileInputRef = useRef<HTMLInputElement>(null);
-	const [selectedAudioKey, setSelectedAudioKey] = useState<string | null>(
-		null,
-	);
+	const [selectedAudioKey, setSelectedAudioKey] = useState<string | null>(null);
 	const [showSettings, setShowSettings] = useState(false);
 
 	const busy =
@@ -119,8 +111,7 @@ export function AiPanelView() {
 					id: scene.id,
 					sceneNumber: scene.sceneNumber,
 					transcriptText: scene.transcriptText,
-					previousScene:
-						scenes[scene.sceneNumber - 2]?.transcriptText ?? null,
+					previousScene: scenes[scene.sceneNumber - 2]?.transcriptText ?? null,
 					nextScene: scenes[scene.sceneNumber]?.transcriptText ?? null,
 				}));
 
@@ -135,7 +126,8 @@ export function AiPanelView() {
 					return {
 						...scene,
 						visualIntent: plan?.visualIntent ?? "",
-						keywords: plan?.keywords ??
+						keywords:
+							plan?.keywords ??
 							extractKeywords({ transcript: scene.transcriptText }),
 						treatment: plan?.treatment ?? "media",
 						templateId: undefined,
@@ -241,7 +233,10 @@ export function AiPanelView() {
 					}));
 				}
 				for (const candidate of ranked) {
-					providerUsage.set(candidate.provider, (providerUsage.get(candidate.provider) ?? 0) + 1);
+					providerUsage.set(
+						candidate.provider,
+						(providerUsage.get(candidate.provider) ?? 0) + 1,
+					);
 				}
 				store.updateScene({
 					sceneId: scene.id,
@@ -364,9 +359,11 @@ export function AiPanelView() {
 							<div className="flex min-w-0 flex-1 flex-col gap-1">
 								<Label className="text-[11px]">Language</Label>
 								<Select
-									value={store.language}
+									value={store.language || "auto"}
 									onValueChange={(value) =>
-										store.setLanguage({ language: value })
+										store.setLanguage({
+											language: value === "auto" ? "" : value,
+										})
 									}
 									disabled={busy}
 								>
@@ -377,7 +374,7 @@ export function AiPanelView() {
 										{TRANSCRIPTION_LANGUAGES.map((language) => (
 											<SelectItem
 												key={language.code || "auto"}
-												value={language.code}
+												value={language.code || "auto"}
 											>
 												{language.label}
 											</SelectItem>
@@ -428,6 +425,22 @@ export function AiPanelView() {
 
 				{store.step === "reviewing" && (
 					<>
+						<div className="flex gap-2">
+							<Button
+								className="flex-1"
+								onClick={() => void handleFindMatches()}
+								disabled={busy || mediaScenes.length === 0}
+							>
+								Find stock matches
+							</Button>
+							<Button
+								className="flex-1"
+								onClick={() => void handleApply()}
+								disabled={busy || !readyToApply}
+							>
+								Apply to timeline
+							</Button>
+						</div>
 						<SceneReviewList />
 						<div className="mt-2 flex flex-col gap-2 border-t pt-3">
 							<CaptionOptions />
@@ -481,7 +494,9 @@ function SettingsSection() {
 
 	return (
 		<div className="flex flex-col gap-2 rounded-md border p-3">
-			<span className="text-xs font-medium">Provider keys (stored locally)</span>
+			<span className="text-xs font-medium">
+				Provider keys (stored locally)
+			</span>
 			{(["groq", "pexels", "pixabay"] as const).map((provider) => (
 				<div key={provider} className="flex flex-col gap-1">
 					<Label className="text-[11px] capitalize">{provider}</Label>
@@ -516,11 +531,7 @@ function SceneReviewList() {
 	);
 }
 
-function SceneCard({
-	scene,
-}: {
-	scene: PlanScene;
-}) {
+function SceneCard({ scene }: { scene: PlanScene }) {
 	const store = useRhymxStore();
 
 	return (
@@ -780,9 +791,7 @@ function collectVoiceoverOptions({
 				key: `${track.id}:${element.id}`,
 				label:
 					element.name ||
-					(element.type === "video"
-						? `${track.name} video audio`
-						: track.name),
+					(element.type === "video" ? `${track.name} video audio` : track.name),
 			});
 		}
 	}

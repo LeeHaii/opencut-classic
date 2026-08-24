@@ -62,45 +62,48 @@ const pexelsVideos: ProviderSearch = async ({ query, page, context }) => {
 		fallbackError: "Pexels error",
 		signal: context.signal,
 	});
-	return recordArray(isRecord(data) ? data.videos : undefined).flatMap((video) => {
-		const files = recordArray(video.video_files)
-			.filter((file) => file.file_type === "video/mp4")
-			.sort(
-				(a, b) =>
-					(optionalNumber(b.width) ?? 0) - (optionalNumber(a.width) ?? 0),
-			);
-		const exportFile =
-			files.find(
-				(file) =>
-					(optionalNumber(file.width) ?? 0) <= 1920 &&
-					(optionalNumber(file.width) ?? 0) >= 1280,
-			) ?? files[0];
-		const previewFile =
-			[...files]
-				.reverse()
-				.find((file) => (optionalNumber(file.width) ?? 0) >= 640) ?? exportFile;
-		const sourceUrl = optionalString(exportFile?.link);
-		if (!sourceUrl) {
-			return [];
-		}
-		const user = isRecord(video.user) ? video.user : null;
-		const candidate: StockCandidate = {
-			id: `pexels:${optionalNumber(video.id) ?? sourceUrl}`,
-			provider: "pexels",
-			kind: "video",
-			sourceUrl,
-			previewUrl: optionalString(previewFile?.link),
-			thumbnailUrl: optionalString(previewFile?.link),
-			width: optionalNumber(video.width),
-			height: optionalNumber(video.height),
-			durationSec: optionalNumber(video.duration),
-			creator: user ? optionalString(user.name) : undefined,
-			creatorUrl: user ? optionalString(user.url) : undefined,
-			landingUrl: optionalString(video.url),
-			...PEXELS_LICENSE,
-		};
-		return [candidate];
-	});
+	return recordArray(isRecord(data) ? data.videos : undefined).flatMap(
+		(video) => {
+			const files = recordArray(video.video_files)
+				.filter((file) => file.file_type === "video/mp4")
+				.sort(
+					(a, b) =>
+						(optionalNumber(b.width) ?? 0) - (optionalNumber(a.width) ?? 0),
+				);
+			const exportFile =
+				files.find(
+					(file) =>
+						(optionalNumber(file.width) ?? 0) <= 1920 &&
+						(optionalNumber(file.width) ?? 0) >= 1280,
+				) ?? files[0];
+			const previewFile =
+				[...files]
+					.reverse()
+					.find((file) => (optionalNumber(file.width) ?? 0) >= 640) ??
+				exportFile;
+			const sourceUrl = optionalString(exportFile?.link);
+			if (!sourceUrl) {
+				return [];
+			}
+			const user = isRecord(video.user) ? video.user : null;
+			const candidate: StockCandidate = {
+				id: `pexels:${optionalNumber(video.id) ?? sourceUrl}`,
+				provider: "pexels",
+				kind: "video",
+				sourceUrl,
+				previewUrl: optionalString(previewFile?.link),
+				thumbnailUrl: optionalString(video.image),
+				width: optionalNumber(video.width),
+				height: optionalNumber(video.height),
+				durationSec: optionalNumber(video.duration),
+				creator: user ? optionalString(user.name) : undefined,
+				creatorUrl: user ? optionalString(user.url) : undefined,
+				landingUrl: optionalString(video.url),
+				...PEXELS_LICENSE,
+			};
+			return [candidate];
+		},
+	);
 };
 
 const pexelsImages: ProviderSearch = async ({ query, page, context }) => {
@@ -110,30 +113,32 @@ const pexelsImages: ProviderSearch = async ({ query, page, context }) => {
 		fallbackError: "Pexels error",
 		signal: context.signal,
 	});
-	return recordArray(isRecord(data) ? data.photos : undefined).flatMap((photo) => {
-		const src = isRecord(photo.src) ? photo.src : null;
-		const sourceUrl = src ? optionalString(src.original) : undefined;
-		if (!sourceUrl) {
-			return [];
-		}
-		const candidate: StockCandidate = {
-			id: `pexels-img:${optionalNumber(photo.id) ?? sourceUrl}`,
-			provider: "pexels",
-			kind: "image",
-			sourceUrl,
-			previewUrl: src ? optionalString(src.large) : undefined,
-			thumbnailUrl: src
-				? (optionalString(src.medium) ?? optionalString(src.small))
-				: undefined,
-			width: optionalNumber(photo.width),
-			height: optionalNumber(photo.height),
-			creator: optionalString(photo.photographer),
-			creatorUrl: optionalString(photo.photographer_url),
-			landingUrl: optionalString(photo.url),
-			...PEXELS_LICENSE,
-		};
-		return [candidate];
-	});
+	return recordArray(isRecord(data) ? data.photos : undefined).flatMap(
+		(photo) => {
+			const src = isRecord(photo.src) ? photo.src : null;
+			const sourceUrl = src ? optionalString(src.original) : undefined;
+			if (!sourceUrl) {
+				return [];
+			}
+			const candidate: StockCandidate = {
+				id: `pexels-img:${optionalNumber(photo.id) ?? sourceUrl}`,
+				provider: "pexels",
+				kind: "image",
+				sourceUrl,
+				previewUrl: src ? optionalString(src.large) : undefined,
+				thumbnailUrl: src
+					? (optionalString(src.medium) ?? optionalString(src.small))
+					: undefined,
+				width: optionalNumber(photo.width),
+				height: optionalNumber(photo.height),
+				creator: optionalString(photo.photographer),
+				creatorUrl: optionalString(photo.photographer_url),
+				landingUrl: optionalString(photo.url),
+				...PEXELS_LICENSE,
+			};
+			return [candidate];
+		},
+	);
 };
 
 async function pixabayRequest({
@@ -337,28 +342,30 @@ const nasaImages: ProviderSearch = async ({ query, page, context }) => {
 		signal: context.signal,
 	});
 	const collection = isRecord(data) ? data.collection : undefined;
-	return recordArray(isRecord(collection) ? collection.items : []).flatMap((item) => {
-		const meta = recordArray(item.data)[0];
-		const nasaId = meta ? optionalString(meta.nasa_id) : undefined;
-		const selfHref = typeof item.href === "string" ? item.href : null;
-		if (!meta || !nasaId || !selfHref) {
-			return [];
-		}
-		const thumbHref = optionalString(recordArray(item.links)[0]?.href);
-		const candidate: StockCandidate = {
-			id: `nasa:${nasaId}`,
-			provider: "nasa",
-			kind: "image",
-			sourceUrl: selfHref,
-			previewUrl: thumbHref,
-			thumbnailUrl: thumbHref,
-			creator: optionalString(meta.photographer) ?? "NASA",
-			landingUrl: `https://images.nasa.gov/details/${nasaId}`,
-			licenseName: "Public domain (NASA media usage guidelines)",
-			licenseUrl: "https://www.nasa.gov/nasa-brand-center/images-and-media/",
-		};
-		return [candidate];
-	});
+	return recordArray(isRecord(collection) ? collection.items : []).flatMap(
+		(item) => {
+			const meta = recordArray(item.data)[0];
+			const nasaId = meta ? optionalString(meta.nasa_id) : undefined;
+			const selfHref = typeof item.href === "string" ? item.href : null;
+			if (!meta || !nasaId || !selfHref) {
+				return [];
+			}
+			const thumbHref = optionalString(recordArray(item.links)[0]?.href);
+			const candidate: StockCandidate = {
+				id: `nasa:${nasaId}`,
+				provider: "nasa",
+				kind: "image",
+				sourceUrl: selfHref,
+				previewUrl: thumbHref,
+				thumbnailUrl: thumbHref,
+				creator: optionalString(meta.photographer) ?? "NASA",
+				landingUrl: `https://images.nasa.gov/details/${nasaId}`,
+				licenseName: "Public domain (NASA media usage guidelines)",
+				licenseUrl: "https://www.nasa.gov/nasa-brand-center/images-and-media/",
+			};
+			return [candidate];
+		},
+	);
 };
 
 const PROVIDER_SEARCHES: Partial<
