@@ -1,6 +1,6 @@
 use hyperframes::{
-    append_child_to_master, composition_dirs, new_master_document, normalize_child,
-    seed_composition, layout, SeedSpec,
+    SeedSpec, append_child_to_master, composition_dirs, layout, new_master_document,
+    normalize_child, seed_composition,
 };
 use serde::Deserialize;
 use std::io::Read;
@@ -40,7 +40,10 @@ fn ensure_project(request: &StudioOpenRequest, root: &std::path::Path) -> Result
     }
     let initial = if request.html.trim().is_empty() {
         let spec = SeedSpec {
-            composition_id: request.composition_id.as_deref().unwrap_or("opencut-master"),
+            composition_id: request
+                .composition_id
+                .as_deref()
+                .unwrap_or("opencut-master"),
             width: request.width.unwrap_or(1920),
             height: request.height.unwrap_or(1080),
             duration_secs: request.duration_secs.unwrap_or(5.0),
@@ -74,15 +77,19 @@ pub fn studio_open(
     }
     // Singleton studio session.
     {
-        let guard = state.studio.lock().map_err(|_| "state poisoned".to_string())?;
+        let guard = state
+            .studio
+            .lock()
+            .map_err(|_| "state poisoned".to_string())?;
         if guard.is_some() {
             return Err("A HyperFrames Studio window is already open".to_string());
         }
     }
 
     let node = util::resolve_node().ok_or("Node.js 22+ is required for HyperFrames Studio")?;
-    let cli = util::resolve_hyperframes_cli()
-        .ok_or("The HyperFrames CLI is missing. Reinstall OpenCut desktop or set HYPERFRAMES_CLI_PATH")?;
+    let cli = util::resolve_hyperframes_cli(&app).ok_or(
+        "The HyperFrames CLI is missing. Reinstall OpenCut desktop or set HYPERFRAMES_CLI_PATH",
+    )?;
 
     let base = crate::commands::project_base(&app)?;
     let dirs = composition_dirs(&base, &request.project_id, &request.element_id);
@@ -90,9 +97,12 @@ pub fn studio_open(
     ensure_project(&request, &dirs.root)?;
 
     let port = {
-        let listener =
-            TcpListener::bind(("127.0.0.1", 0)).map_err(|e| format!("no free port available: {e}"))?;
-        listener.local_addr().map(|a| a.port()).map_err(|e| e.to_string())?
+        let listener = TcpListener::bind(("127.0.0.1", 0))
+            .map_err(|e| format!("no free port available: {e}"))?;
+        listener
+            .local_addr()
+            .map(|a| a.port())
+            .map_err(|e| e.to_string())?
     };
 
     let args = vec![
@@ -106,7 +116,9 @@ pub fn studio_open(
         "--no-proxy".into(),
     ];
     let mut command = util::build_command(&node, &args, Some(&dirs.root), false);
-    let mut child = command.spawn().map_err(|e| format!("failed to start Studio server: {e}"))?;
+    let mut child = command
+        .spawn()
+        .map_err(|e| format!("failed to start Studio server: {e}"))?;
 
     // Wait for readiness via stdout URL or TCP probe.
     let started = Instant::now();
@@ -151,7 +163,9 @@ pub fn studio_open(
     if !ready {
         let _ = child.kill();
         let _ = child.wait();
-        return Err("HyperFrames Studio did not start in time. Check `hf_doctor` output.".to_string());
+        return Err(
+            "HyperFrames Studio did not start in time. Check `hf_doctor` output.".to_string(),
+        );
     }
 
     let session = Arc::new(StudioSession {
@@ -201,11 +215,21 @@ pub fn studio_open(
 
     insert_run_studio(&state, session)?;
 
-    Ok(StudioInfo { url: format!("http://127.0.0.1:{port}"), port, dir: dirs.root.to_string_lossy().into_owned() })
+    Ok(StudioInfo {
+        url: format!("http://127.0.0.1:{port}"),
+        port,
+        dir: dirs.root.to_string_lossy().into_owned(),
+    })
 }
 
-fn insert_run_studio(state: &State<'_, AppState>, session: Arc<StudioSession>) -> Result<(), String> {
-    let mut guard = state.studio.lock().map_err(|_| "state poisoned".to_string())?;
+fn insert_run_studio(
+    state: &State<'_, AppState>,
+    session: Arc<StudioSession>,
+) -> Result<(), String> {
+    let mut guard = state
+        .studio
+        .lock()
+        .map_err(|_| "state poisoned".to_string())?;
     if guard.is_some() {
         return Err("A HyperFrames Studio window is already open".to_string());
     }
@@ -268,7 +292,10 @@ pub struct StudioAppendResult {
 /// Appends a freshly generated child composition to the master document and
 /// writes both files into the Studio project tree.
 #[tauri::command]
-pub fn studio_append(app: AppHandle, request: StudioAppendRequest) -> Result<StudioAppendResult, String> {
+pub fn studio_append(
+    app: AppHandle,
+    request: StudioAppendRequest,
+) -> Result<StudioAppendResult, String> {
     for id in [&request.project_id, &request.element_id] {
         if !crate::commands::valid_identifier(id) {
             return Err(format!("invalid identifier: {id}"));

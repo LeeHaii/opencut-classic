@@ -20,7 +20,11 @@ pub struct CompositionDirs {
 }
 
 pub fn composition_dirs(base: &Path, project_id: &str, element_id: &str) -> CompositionDirs {
-    let root = base.join("projects").join(project_id).join("hyperframes").join(element_id);
+    let root = base
+        .join("projects")
+        .join(project_id)
+        .join("hyperframes")
+        .join(element_id);
     CompositionDirs {
         compositions: root.join("compositions"),
         index_html: root.join("index.html"),
@@ -69,8 +73,14 @@ mod tests {
     #[test]
     fn builds_layout() {
         let dirs = composition_dirs(Path::new("/data"), "p1", "el2");
-        assert_eq!(dirs.index_html, PathBuf::from("/data/projects/p1/hyperframes/el2/index.html"));
-        assert_eq!(dirs.scene_mp4, PathBuf::from("/data/projects/p1/hyperframes/el2/renders/scene.mp4"));
+        assert_eq!(
+            dirs.index_html,
+            PathBuf::from("/data/projects/p1/hyperframes/el2/index.html")
+        );
+        assert_eq!(
+            dirs.scene_mp4,
+            PathBuf::from("/data/projects/p1/hyperframes/el2/renders/scene.mp4")
+        );
     }
 
     #[test]

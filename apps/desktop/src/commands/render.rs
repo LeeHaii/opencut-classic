@@ -6,7 +6,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, Manager, State};
 
-use crate::state::{insert_run, remove_run, RenderJob, AppState};
+use crate::state::{AppState, RenderJob, insert_run, remove_run};
 use crate::util;
 
 const RENDER_WATCHDOG: Duration = Duration::from_secs(30 * 60);
@@ -27,7 +27,11 @@ pub struct RenderRequest {
 }
 
 #[tauri::command]
-pub fn hf_render(app: AppHandle, state: State<'_, AppState>, request: RenderRequest) -> Result<serde_json::Value, String> {
+pub fn hf_render(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    request: RenderRequest,
+) -> Result<serde_json::Value, String> {
     for id in [&request.project_id, &request.element_id] {
         if !crate::commands::valid_identifier(id) {
             return Err(format!("invalid identifier: {id}"));
@@ -35,9 +39,11 @@ pub fn hf_render(app: AppHandle, state: State<'_, AppState>, request: RenderRequ
     }
     validate_composition(&request.html).map_err(|e| e.to_string())?;
 
-    let node = util::resolve_node().ok_or("Node.js 22+ is required for rendering. Install it from nodejs.org")?;
-    let cli = util::resolve_hyperframes_cli()
-        .ok_or("The HyperFrames CLI is missing. Reinstall OpenCut desktop or set HYPERFRAMES_CLI_PATH")?;
+    let node = util::resolve_node()
+        .ok_or("Node.js 22+ is required for rendering. Install it from nodejs.org")?;
+    let cli = util::resolve_hyperframes_cli(&app).ok_or(
+        "The HyperFrames CLI is missing. Reinstall OpenCut desktop or set HYPERFRAMES_CLI_PATH",
+    )?;
 
     let base = crate::commands::project_base(&app)?;
     let dirs = composition_dirs(&base, &request.project_id, &request.element_id);
@@ -60,6 +66,9 @@ pub fn hf_render(app: AppHandle, state: State<'_, AppState>, request: RenderRequ
         "render".into(),
         "-o".into(),
         dirs.scene_mp4.to_string_lossy().into_owned(),
+        "--workers".into(),
+        "1".into(),
+        "--low-memory-mode".into(),
     ];
 
     if dirs.scene_mp4.exists() {
@@ -67,9 +76,14 @@ pub fn hf_render(app: AppHandle, state: State<'_, AppState>, request: RenderRequ
     }
 
     let mut command = util::build_command(&node, &args, Some(&dirs.root), false);
-    let child = command.spawn().map_err(|e| format!("failed to start renderer: {e}"))?;
+    let child = command
+        .spawn()
+        .map_err(|e| format!("failed to start renderer: {e}"))?;
 
-    let job = Arc::new(RenderJob { child: Mutex::new(None), cancel: AtomicBool::new(false) });
+    let job = Arc::new(RenderJob {
+        child: Mutex::new(None),
+        cancel: AtomicBool::new(false),
+    });
     insert_run(&state.render_jobs, &request.job_id, job.clone())?;
 
     let app_handle = app.clone();
@@ -91,8 +105,10 @@ fn supervise_render(
     job: Arc<RenderJob>,
     mut child: std::process::Child,
 ) {
-    let stdout_pipe: Option<Box<dyn std::io::Read + Send>> = child.stdout.take().map(|p| Box::new(p) as _);
-    let stderr_pipe: Option<Box<dyn std::io::Read + Send>> = child.stderr.take().map(|p| Box::new(p) as _);
+    let stdout_pipe: Option<Box<dyn std::io::Read + Send>> =
+        child.stdout.take().map(|p| Box::new(p) as _);
+    let stderr_pipe: Option<Box<dyn std::io::Read + Send>> =
+        child.stderr.take().map(|p| Box::new(p) as _);
     if let Ok(mut slot) = job.child.lock() {
         *slot = Some(child);
     }
@@ -155,7 +171,10 @@ fn supervise_render(
     }
 
     if job.cancel.load(Ordering::Relaxed) {
-        let _ = app.emit("hf-render-error", serde_json::json!({ "jobId": job_id, "message": "cancelled" }));
+        let _ = app.emit(
+            "hf-render-error",
+            serde_json::json!({ "jobId": job_id, "message": "cancelled" }),
+        );
         return;
     }
     if exit_ok && mp4_path.exists() {
@@ -187,7 +206,11 @@ fn supervise_render(
 
 fn run_child_wait(job: &Arc<RenderJob>) -> Option<bool> {
     let mut slot = job.child.lock().ok()?;
-    slot.as_mut()?.try_wait().ok().flatten().map(|status| status.success())
+    slot.as_mut()?
+        .try_wait()
+        .ok()
+        .flatten()
+        .map(|status| status.success())
 }
 
 #[tauri::command]

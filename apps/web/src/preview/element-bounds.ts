@@ -3,9 +3,7 @@ import type { MediaAsset } from "@/media/types";
 import { STICKER_INTRINSIC_SIZE_FALLBACK } from "@/stickers/intrinsic-size";
 import { getGraphicSourceSize } from "@/graphics";
 import { measureTextElement } from "@/text/measure-element";
-import {
-	getElementLocalTime,
-} from "@/animation";
+import { getElementLocalTime } from "@/animation";
 import { resolveTransformAtTime } from "@/rendering/animation-values";
 import { buildTransformFromParams } from "@/rendering";
 
@@ -122,14 +120,24 @@ function getElementBounds({
 
 	const { width: canvasWidth, height: canvasHeight } = canvasSize;
 
-	if (element.type === "video" || element.type === "image") {
+	if (
+		element.type === "video" ||
+		element.type === "image" ||
+		element.type === "hyperframes"
+	) {
 		const transform = resolveTransformAtTime({
 			baseTransform: buildTransformFromParams({ params: element.params }),
 			animations: element.animations,
 			localTime,
 		});
-		const sourceWidth = mediaAsset?.width ?? canvasWidth;
-		const sourceHeight = mediaAsset?.height ?? canvasHeight;
+		const sourceWidth =
+			element.type === "hyperframes"
+				? element.width
+				: (mediaAsset?.width ?? canvasWidth);
+		const sourceHeight =
+			element.type === "hyperframes"
+				? element.height
+				: (mediaAsset?.height ?? canvasHeight);
 		return getVisualElementBounds({
 			canvasWidth,
 			canvasHeight,
@@ -160,10 +168,9 @@ function getElementBounds({
 			animations: element.animations,
 			localTime,
 		});
-		const { width: sourceWidth, height: sourceHeight } =
-			getGraphicSourceSize({
-				definitionId: element.definitionId,
-			});
+		const { width: sourceWidth, height: sourceHeight } = getGraphicSourceSize({
+			definitionId: element.definitionId,
+		});
 		return getVisualElementBounds({
 			canvasWidth,
 			canvasHeight,
@@ -241,7 +248,8 @@ export function getEdgeHandlePosition({
 	const angleRad = (bounds.rotation * Math.PI) / 180;
 	const cos = Math.cos(angleRad);
 	const sin = Math.sin(angleRad);
-	const localX = edge === "right" ? halfWidth : edge === "left" ? -halfWidth : 0;
+	const localX =
+		edge === "right" ? halfWidth : edge === "left" ? -halfWidth : 0;
 	const localY = edge === "bottom" ? halfHeight : 0;
 	return {
 		x: bounds.cx + (localX * cos - localY * sin),

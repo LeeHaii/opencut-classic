@@ -37,26 +37,39 @@ pub fn hf_doctor(app: AppHandle) -> DoctorReport {
     let node = ToolStatus {
         found: node_path.is_some(),
         path: node_path.as_ref().map(|p| p.to_string_lossy().into_owned()),
-        version: node_path.as_ref().and_then(|p| version_of(p, &["--version"])),
+        version: node_path
+            .as_ref()
+            .and_then(|p| version_of(p, &["--version"])),
     };
 
     let ffmpeg_path = util::which("ffmpeg");
     let ffmpeg = ToolStatus {
         found: ffmpeg_path.is_some(),
-        path: ffmpeg_path.as_ref().map(|p| p.to_string_lossy().into_owned()),
-        version: ffmpeg_path.as_ref().and_then(|p| version_of(p, &["-version"])),
+        path: ffmpeg_path
+            .as_ref()
+            .map(|p| p.to_string_lossy().into_owned()),
+        version: ffmpeg_path
+            .as_ref()
+            .and_then(|p| version_of(p, &["-version"])),
     };
 
-    let cli_path = util::resolve_hyperframes_cli();
-    let cli_version = cli_path.as_ref().zip(node_path.as_ref()).and_then(|(cli, node)| {
-        util::capture_with_timeout(node, &[&cli.to_string_lossy(), "--version"], Duration::from_secs(15))
+    let cli_path = util::resolve_hyperframes_cli(&app);
+    let cli_version = cli_path
+        .as_ref()
+        .zip(node_path.as_ref())
+        .and_then(|(cli, node)| {
+            util::capture_with_timeout(
+                node,
+                &[&cli.to_string_lossy(), "--version"],
+                Duration::from_secs(15),
+            )
             .and_then(|out| {
                 out.stdout
                     .lines()
                     .find(|line| !line.trim().is_empty())
                     .map(|l| l.trim().to_string())
             })
-    });
+        });
     let hyperframes_cli = ToolStatus {
         found: cli_path.is_some(),
         path: cli_path.as_ref().map(|p| p.to_string_lossy().into_owned()),

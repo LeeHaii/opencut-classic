@@ -174,6 +174,7 @@ export interface HyperframesElement extends BaseTimelineElement {
 	width: number;
 	height: number;
 	hidden?: boolean;
+	effects?: Effect[];
 	/** Set once the composition has been rendered to MP4 via the native CLI. */
 	renderedMediaId?: string;
 	/** Hash of the html + media refs at the time of render; invalidates cache. */

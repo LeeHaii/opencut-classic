@@ -27,7 +27,11 @@ pub struct StudioSession {
     pub element_id: String,
 }
 
-pub fn insert_run<T>(map: &Mutex<HashMap<String, Arc<T>>>, id: &str, run: Arc<T>) -> Result<(), String> {
+pub fn insert_run<T>(
+    map: &Mutex<HashMap<String, Arc<T>>>,
+    id: &str,
+    run: Arc<T>,
+) -> Result<(), String> {
     let mut guard = map.lock().map_err(|_| "state poisoned")?;
     if guard.contains_key(id) {
         return Err(format!("a job with id {id} is already running"));

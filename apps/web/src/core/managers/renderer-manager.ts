@@ -6,8 +6,13 @@ import { SceneExporter } from "@/services/renderer/scene-exporter";
 import { buildScene } from "@/services/renderer/scene-builder";
 import { createTimelineAudioBuffer } from "@/media/audio";
 import { formatTimecode } from "opencut-wasm";
-import { frameRateToFloat } from "@/fps/utils";
 import { downloadBlob } from "@/utils/browser";
+import {
+	hashHyperframesSource,
+	HyperframesRenderCancelledError,
+	renderHyperframesElement,
+} from "@/hyperframes/render-element";
+import { isNative } from "@opencut/hyperframes";
 
 type SnapshotResult =
 	| { success: true; blob: Blob; filename: string }
@@ -122,7 +127,10 @@ export class RendererManager {
 				return { success: false, error: "Failed to create image" };
 			}
 
-			const timecode = formatTimecode({ time: renderTime, rate: fps })!.replace(/:/g, "-");
+			const timecode = formatTimecode({ time: renderTime, rate: fps })!.replace(
+				/:/g,
+				"-",
+			);
 			const safeName =
 				activeProject.metadata.name.replace(/[<>:"/\\|?*]/g, "-").trim() ||
 				"snapshot";
@@ -150,8 +158,8 @@ export class RendererManager {
 		const { format, quality, fps, includeAudio } = options;
 
 		try {
-			const tracks = this.editor.scenes.getActiveScene().tracks;
-			const mediaAssets = this.editor.media.getAssets();
+			let tracks = this.editor.scenes.getActiveScene().tracks;
+			let mediaAssets = this.editor.media.getAssets();
 			const activeProject = this.editor.project.getActive();
 
 			if (!activeProject) {
@@ -163,12 +171,47 @@ export class RendererManager {
 				return { success: false, error: "Project is empty" };
 			}
 
+			const mediaIds = new Set(mediaAssets.map((asset) => asset.id));
+			const unrenderedAiSceneIds: string[] = [];
+			for (const track of [...tracks.overlay, tracks.main]) {
+				for (const element of track.elements) {
+					if (
+						element.type === "hyperframes" &&
+						(!element.renderedMediaId ||
+							!mediaIds.has(element.renderedMediaId) ||
+							element.renderHash !==
+								hashHyperframesSource({ html: element.html }))
+					) {
+						unrenderedAiSceneIds.push(element.id);
+					}
+				}
+			}
+			const nativeRenderIds = isNative() ? unrenderedAiSceneIds : [];
+			for (let index = 0; index < nativeRenderIds.length; index++) {
+				if (onCancel?.()) return { success: false, cancelled: true };
+				await renderHyperframesElement({
+					editor: this.editor,
+					elementId: nativeRenderIds[index],
+					shouldCancel: onCancel,
+				});
+				onProgress?.({
+					progress: ((index + 1) / nativeRenderIds.length) * 0.2,
+				});
+			}
+			if (nativeRenderIds.length > 0) {
+				tracks = this.editor.scenes.getActiveScene().tracks;
+				mediaAssets = this.editor.media.getAssets();
+			}
+			const renderPreflightShare = nativeRenderIds.length > 0 ? 0.2 : 0;
+
 			const exportFps = fps ?? activeProject.settings.fps;
 			const canvasSize = activeProject.settings.canvasSize;
 
 			let audioBuffer: AudioBuffer | null = null;
 			if (includeAudio) {
-				onProgress?.({ progress: 0.05 });
+				onProgress?.({
+					progress: renderPreflightShare + (1 - renderPreflightShare) * 0.05,
+				});
 				audioBuffer = await createTimelineAudioBuffer({
 					tracks,
 					mediaAssets,
@@ -195,10 +238,11 @@ export class RendererManager {
 			});
 
 			exporter.on("progress", (progress) => {
-				const adjustedProgress = includeAudio
-					? 0.05 + progress * 0.95
-					: progress;
-				onProgress?.({ progress: adjustedProgress });
+				const exportProgress = includeAudio ? 0.05 + progress * 0.95 : progress;
+				onProgress?.({
+					progress:
+						renderPreflightShare + exportProgress * (1 - renderPreflightShare),
+				});
 			});
 
 			let cancelled = false;
@@ -231,6 +275,9 @@ export class RendererManager {
 				clearInterval(cancelInterval);
 			}
 		} catch (error) {
+			if (error instanceof HyperframesRenderCancelledError) {
+				return { success: false, cancelled: true };
+			}
 			console.error("Export failed:", error);
 			return {
 				success: false,

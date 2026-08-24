@@ -27,7 +27,9 @@ pub fn app_data_dir(app: tauri::AppHandle) -> Result<AppDataDir, String> {
         .path()
         .app_data_dir()
         .map_err(|_| "app data directory unavailable".to_string())?;
-    Ok(AppDataDir { path: dir.to_string_lossy().into_owned() })
+    Ok(AppDataDir {
+        path: dir.to_string_lossy().into_owned(),
+    })
 }
 
 /// Ensures the app-data root exists and returns it.

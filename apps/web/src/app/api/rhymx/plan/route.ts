@@ -1,6 +1,9 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { extractChatContent, extractErrorMessage } from "@/plugins/rhymx/ai/groq-client";
+import {
+	groqChatJson,
+	GROQ_PLANNER_MODEL,
+} from "@/plugins/rhymx/ai/groq-client";
 
 const requestSchema = z.object({
 	fullNarration: z.string().max(80_000),
@@ -26,9 +29,6 @@ const SYSTEM_PROMPT =
 	"Resolve pronouns and abstract language from the full narration. Do not merely extract nearby words, do not repeat the same phrase with tiny changes, and do not invent unsupported people, brands, or events. " +
 	'Use treatment "motion" only when designed typography, a statistic, quotation, comparison, title, diagram, transition, or call to action communicates better than footage. Otherwise use "media". ' +
 	'Return only JSON: {"scenes":[{"id":"supplied id","visualIntent":"concise shot direction","keywords":["phrase 1","phrase 2","phrase 3"],"treatment":"media or motion"}]}.';
-
-const GROQ_CHAT_URL = "https://api.groq.com/openai/v1/chat/completions";
-const PLANNER_MODEL = "llama-3.1-8b-instant";
 
 const rateBuckets = new Map<string, number[]>();
 const RATE_LIMIT = 10;
@@ -78,44 +78,24 @@ export async function POST(request: Request) {
 	}
 
 	try {
-		const response = await fetch(GROQ_CHAT_URL, {
-			method: "POST",
-			headers: {
-				Authorization: `Bearer ${apiKey}`,
-				"Content-Type": "application/json",
-			},
-			body: JSON.stringify({
-				model: PLANNER_MODEL,
-				temperature: 0.15,
-				response_format: { type: "json_object" },
-				messages: [
-					{ role: "system", content: SYSTEM_PROMPT },
-					{
-						role: "user",
-						content: JSON.stringify({
-							fullNarration: parsed.data.fullNarration,
-							scenesToPlan: parsed.data.scenes,
-						}),
-					},
-				],
+		const content = await groqChatJson({
+			apiKey,
+			model: process.env.GROQ_PLANNER_MODEL ?? GROQ_PLANNER_MODEL,
+			systemPrompt: SYSTEM_PROMPT,
+			userMessage: JSON.stringify({
+				fullNarration: parsed.data.fullNarration,
+				scenesToPlan: parsed.data.scenes,
 			}),
+			temperature: 0.15,
 		});
-		const data: unknown = await response.json();
-		const content = extractChatContent(data);
-		const errorMessage = extractErrorMessage(data);
-
-		if (!response.ok || !content) {
-			return NextResponse.json(
-				{
-					error:
-						errorMessage ?? `Upstream planning failed (${response.status})`,
-				},
-				{ status: 502 },
-			);
-		}
 		return NextResponse.json({ raw: content });
 	} catch (error) {
 		console.error("[rhymx] plan error:", error);
-		return NextResponse.json({ error: "Internal server error" }, { status: 500 });
+		return NextResponse.json(
+			{
+				error: error instanceof Error ? error.message : "Internal server error",
+			},
+			{ status: 502 },
+		);
 	}
 }

@@ -7,11 +7,11 @@ import {
 	Folder03Icon,
 	Happy01Icon,
 	HeadphonesIcon,
+	HtmlFiveIcon,
 	MagicWand05Icon,
 	TextIcon,
 	Settings01Icon,
 	SlidersHorizontalIcon,
-	ColorsIcon,
 	AiMagicIcon,
 	SparklesIcon,
 } from "@hugeicons/core-free-icons";
@@ -28,16 +28,19 @@ export const TAB_KEYS = [
 	"adjustment",
 	"ai",
 	"motion",
+	"hyperframes",
 	"settings",
 ] as const;
 
 export type Tab = (typeof TAB_KEYS)[number];
 
-const createHugeiconsIcon =
-	({ icon }: { icon: IconSvgElement }) =>
-	({ className }: { className?: string }) => (
-		<HugeiconsIcon icon={icon} className={className} />
-	);
+function createHugeiconsIcon({ icon }: { icon: IconSvgElement }) {
+	function HugeiconTabIcon({ className }: { className?: string }) {
+		return <HugeiconsIcon icon={icon} className={className} />;
+	}
+	HugeiconTabIcon.displayName = "HugeiconTabIcon";
+	return HugeiconTabIcon;
+}
 
 export const tabs = {
 	media: {
@@ -79,6 +82,10 @@ export const tabs = {
 	motion: {
 		icon: createHugeiconsIcon({ icon: SparklesIcon }),
 		label: "Motion",
+	},
+	hyperframes: {
+		icon: createHugeiconsIcon({ icon: HtmlFiveIcon }),
+		label: "AI Motion (HyperFrames)",
 	},
 	settings: {
 		icon: createHugeiconsIcon({ icon: Settings01Icon }),

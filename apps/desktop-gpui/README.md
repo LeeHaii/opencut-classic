@@ -1,6 +1,9 @@
-# Desktop
+# Experimental GPUI shell
 
-The native desktop app, built with [GPUI](https://gpui.rs).
+This is an unfinished native UI experiment built with
+[GPUI](https://gpui.rs). It currently displays only an `OpenCut` placeholder.
+For the functional OpenCut editor with HyperFrames and Antigravity support, use
+[`../desktop`](../desktop/README.md).
 
 ## Getting started
 
@@ -33,7 +36,7 @@ powershell -ExecutionPolicy Bypass -File .\apps\desktop\script\setup.ps1
 **3. Run:**
 
 ```bash
-cargo run -p opencut-desktop
+cargo run -p opencut-desktop-gpui
 ```
 
 ## Platform notes

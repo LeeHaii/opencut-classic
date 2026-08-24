@@ -1,5 +1,5 @@
 [package]
-name = "opencut-desktop-tauri"
+name = "opencut-desktop"
 version = "0.1.0"
 edition = "2024"
 

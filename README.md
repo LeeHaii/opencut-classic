@@ -73,7 +73,17 @@ The `.env.example` has sensible defaults that match the Docker Compose config â€
 
 Desktop is opt-in. If you're only working on the web app, skip this entirely.
 
-If you want to get ready for `apps/desktop`, see [`apps/desktop/README.md`](apps/desktop/README.md). It's a two-step setup: Rust toolchain first, then desktop native dependencies.
+From the repository root, launch the functional Tauri desktop app with:
+
+```powershell
+node .\apps\desktop\script\tauri.mjs dev
+```
+
+The launcher lives at `apps/desktop/script/tauri.mjs` (`script` is singular).
+If Bun is installed, `bun run desktop:dev` is an equivalent shortcut.
+See [`apps/desktop/README.md`](apps/desktop/README.md) for prerequisites,
+troubleshooting, and release builds. Do not launch `apps/desktop-gpui`; that is
+the unfinished GPUI shell and currently shows only a placeholder screen.
 
 ### Local WASM development
 

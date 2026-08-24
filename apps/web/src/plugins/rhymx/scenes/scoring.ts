@@ -23,10 +23,9 @@ export function scoreCandidate({
 }): number {
 	let score = 0;
 
-	const haystack = [
-		candidate.landingUrl ?? "",
-		candidate.creator ?? "",
-	].join(" ").toLowerCase();
+	const haystack = [candidate.landingUrl ?? "", candidate.creator ?? ""]
+		.join(" ")
+		.toLowerCase();
 	const matches = context.queryTerms.filter((term) =>
 		haystack.includes(term),
 	).length;
@@ -72,21 +71,30 @@ export function rankCandidates({
 	context: ScoreContext;
 	limit?: number;
 }): StockCandidate[] {
-	const providerUsage = context.providerUsage ?? new Map<StockProviderId, number>();
-	const scored = [...candidates].sort(
-		(a, b) =>
-			scoreCandidate({ candidate: b, context }) -
-			scoreCandidate({ candidate: a, context }),
-	);
-
+	const providerUsage =
+		context.providerUsage ?? new Map<StockProviderId, number>();
 	const seenProviders = new Map(providerUsage);
+	const remaining = [...candidates];
 	const picked: StockCandidate[] = [];
-	for (const candidate of scored) {
-		if (picked.length >= limit) {
-			break;
-		}
+	while (picked.length < limit && remaining.length > 0) {
+		remaining.sort(
+			(left, right) =>
+				scoreCandidate({
+					candidate: right,
+					context: { ...context, providerUsage: seenProviders },
+				}) -
+				scoreCandidate({
+					candidate: left,
+					context: { ...context, providerUsage: seenProviders },
+				}),
+		);
+		const candidate = remaining.shift();
+		if (!candidate) break;
 		picked.push(candidate);
-		seenProviders.set(candidate.provider, (seenProviders.get(candidate.provider) ?? 0) + 1);
+		seenProviders.set(
+			candidate.provider,
+			(seenProviders.get(candidate.provider) ?? 0) + 1,
+		);
 	}
 	return picked;
 }

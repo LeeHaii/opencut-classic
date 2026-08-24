@@ -1,7 +1,10 @@
 "use client";
 
 import { Separator } from "@/components/ui/separator";
-import { type Tab, useAssetsPanelStore } from "@/components/editor/panels/assets/assets-panel-store";
+import {
+	type Tab,
+	useAssetsPanelStore,
+} from "@/components/editor/panels/assets/assets-panel-store";
 import { TabBar } from "./tabbar";
 import { Captions } from "@/subtitles/components/assets-view";
 import { MediaView } from "./views/assets";
@@ -12,6 +15,7 @@ import { TextView } from "@/text/components/assets-view";
 import { EffectsView } from "@/effects/components/assets-view";
 import { AiPanelView } from "@/plugins/rhymx/ui/ai-panel-view";
 import { MotionLibraryView } from "@/plugins/rhymx/ui/motion-library-view";
+import { AiMotionPanelView } from "@/hyperframes/components/ai-motion-panel";
 
 export function AssetsPanel() {
 	const { activeTab } = useAssetsPanelStore();
@@ -35,6 +39,7 @@ export function AssetsPanel() {
 		),
 		ai: <AiPanelView />,
 		motion: <MotionLibraryView />,
+		hyperframes: <AiMotionPanelView />,
 		settings: <SettingsView />,
 	};
 

@@ -38,7 +38,10 @@ fn percent_decode_path(encoded: &str) -> String {
 
 /// Builds the internal URL an element references a local media file with.
 pub fn internal_url_for(path: &Path) -> String {
-    format!("{INTERNAL_SCHEME}://local/{}", percent_encode_path(&path.to_string_lossy()))
+    format!(
+        "{INTERNAL_SCHEME}://local/{}",
+        percent_encode_path(&path.to_string_lossy())
+    )
 }
 
 /// Lexically normalizes `.` and `..` components without touching the disk.
@@ -86,7 +89,11 @@ pub fn rewrite_to_portable(html: &str, base_dir: &Path) -> String {
         };
         let forward = resolved.to_string_lossy().replace('\\', "/");
         let leading_slash = forward.starts_with('/');
-        out.push_str(&format!("file://{}{}", if leading_slash { "" } else { "/" }, forward));
+        out.push_str(&format!(
+            "file://{}{}",
+            if leading_slash { "" } else { "/" },
+            forward
+        ));
         rest = &after[end..];
     }
     out.push_str(rest);
@@ -101,7 +108,10 @@ mod tests {
     #[test]
     fn encodes_and_decodes_windows_paths() {
         let url = internal_url_for(Path::new(r"C:\Users\me\my video.mp4"));
-        assert_eq!(url, "opencut-media://local/C%3A%5CUsers%5Cme%5Cmy%20video.mp4");
+        assert_eq!(
+            url,
+            "opencut-media://local/C%3A%5CUsers%5Cme%5Cmy%20video.mp4"
+        );
         assert_eq!(
             percent_decode_path("C%3A%5CUsers%5Cme%5Cmy%20video.mp4"),
             r"C:\Users\me\my video.mp4"
@@ -110,10 +120,17 @@ mod tests {
 
     #[test]
     fn rewrites_every_internal_ref() {
-        let base = if cfg!(windows) { Path::new("C:\\proj\\assets") } else { Path::new("/proj/assets") };
+        let base = if cfg!(windows) {
+            Path::new("C:\\proj\\assets")
+        } else {
+            Path::new("/proj/assets")
+        };
         let inside = internal_url_for(&base.join("clip.mp4"));
-        let outside =
-            internal_url_for(Path::new(if cfg!(windows) { "D:\\other\\x.mp4" } else { "/other/x.mp4" }));
+        let outside = internal_url_for(Path::new(if cfg!(windows) {
+            "D:\\other\\x.mp4"
+        } else {
+            "/other/x.mp4"
+        }));
         let html = format!(r#"<video src="{inside}"><video src="{outside}">"#);
         let rewritten = rewrite_to_portable(&html, base);
         assert_eq!(rewritten.matches("file://").count(), 2);
@@ -124,7 +141,11 @@ mod tests {
 
     #[test]
     fn resolves_relative_refs_against_base() {
-        let base = if cfg!(windows) { Path::new("C:\\proj") } else { Path::new("/proj") };
+        let base = if cfg!(windows) {
+            Path::new("C:\\proj")
+        } else {
+            Path::new("/proj")
+        };
         let html = r#"<img src="opencut-media://local/img%2Fa.png">"#;
         let rewritten = rewrite_to_portable(html, base);
         assert!(rewritten.contains("img/a.png"), "{rewritten}");

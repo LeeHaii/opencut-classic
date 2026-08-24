@@ -7,7 +7,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, Manager, State};
 
-use crate::state::{insert_run, remove_run, AgentRun, AppState};
+use crate::state::{AgentRun, AppState, insert_run, remove_run};
 use crate::util;
 
 const WATCHDOG: Duration = Duration::from_secs(21 * 60);
@@ -43,18 +43,30 @@ pub fn antigravity_status() -> agy::AntigravityStatus {
 pub fn antigravity_login() -> Result<bool, String> {
     let exe = agy::resolve_executable().ok_or("Antigravity CLI is not installed")?;
     let mut command = util::build_command(&exe, &[], None, true);
-    command.stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null());
-    let child = command.spawn().map_err(|e| format!("failed to launch Antigravity CLI: {e}"))?;
+    command
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null());
+    let child = command
+        .spawn()
+        .map_err(|e| format!("failed to launch Antigravity CLI: {e}"))?;
     drop(child);
     Ok(true)
 }
 
 #[tauri::command]
-pub fn antigravity_run(app: AppHandle, state: State<'_, AppState>, request: AntigravityRunRequest) -> Result<serde_json::Value, String> {
+pub fn antigravity_run(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    request: AntigravityRunRequest,
+) -> Result<serde_json::Value, String> {
     if !crate::commands::valid_identifier(&request.project_id) {
         return Err("invalid project id".to_string());
-    }    if request.prompt.chars().count() > agy::MAX_PROMPT_CHARS {
-        return Err(format!("prompt exceeds the {} character limit", agy::MAX_PROMPT_CHARS));
+    }
+    if request.prompt.chars().count() > agy::MAX_PROMPT_CHARS {
+        return Err(format!(
+            "prompt exceeds the {} character limit",
+            agy::MAX_PROMPT_CHARS
+        ));
     }
     let status = antigravity_status();
     if !status.installed {
@@ -74,15 +86,26 @@ pub fn antigravity_run(app: AppHandle, state: State<'_, AppState>, request: Anti
         .join("projects")
         .join(&request.project_id)
         .join("agent-workspace");
-    std::fs::create_dir_all(&workspace).map_err(|e| format!("failed to create agent workspace: {e}"))?;
+    std::fs::create_dir_all(&workspace)
+        .map_err(|e| format!("failed to create agent workspace: {e}"))?;
 
-    let exe = status.executable_path.map(std::path::PathBuf::from).unwrap_or_default();
-    let args = agy::build_args(&request.prompt, request.conversation_id.as_deref(), request.model.as_deref());
+    let exe = status
+        .executable_path
+        .map(std::path::PathBuf::from)
+        .unwrap_or_default();
+    let args = agy::build_args(
+        &request.prompt,
+        request.conversation_id.as_deref(),
+        request.model.as_deref(),
+    );
     let child = util::build_command(&exe, &args, Some(&workspace), false)
         .spawn()
         .map_err(|e| format!("failed to start Antigravity CLI: {e}"))?;
 
-    let run = Arc::new(AgentRun { child: Mutex::new(None), cancel: AtomicBool::new(false) });
+    let run = Arc::new(AgentRun {
+        child: Mutex::new(None),
+        cancel: AtomicBool::new(false),
+    });
     insert_run(&state.agent_runs, &request.request_id, run.clone())?;
 
     let app_handle = app.clone();
@@ -164,14 +187,17 @@ fn supervise_agent(app: AppHandle, request_id: String, run: Arc<AgentRun>, mut c
     }
 
     let turn = agy::parse_stream_json(&stdout_all);
-    let _ = app.emit("antigravity-done", AgentDonePayload {
-        request_id,
-        text: turn.text,
-        conversation_id: turn.conversation_id,
-        usage: turn.usage,
-        fallback_text: turn.fallback_text,
-        error: None,
-    });
+    let _ = app.emit(
+        "antigravity-done",
+        AgentDonePayload {
+            request_id,
+            text: turn.text,
+            conversation_id: turn.conversation_id,
+            usage: turn.usage,
+            fallback_text: turn.fallback_text,
+            error: None,
+        },
+    );
 }
 
 fn kill_stored_child(run: &Arc<AgentRun>) {
@@ -221,7 +247,10 @@ fn collect_stream(
 
 fn merge(mut value: serde_json::Value, message: &str) -> serde_json::Value {
     if let Some(obj) = value.as_object_mut() {
-        obj.insert("message".into(), serde_json::Value::String(message.to_string()));
+        obj.insert(
+            "message".into(),
+            serde_json::Value::String(message.to_string()),
+        );
     }
     value
 }

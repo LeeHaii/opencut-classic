@@ -39,6 +39,7 @@ import type {
 	VideoElement,
 	ImageElement,
 	AudioElement,
+	HyperframesElement,
 } from "@/timeline";
 import type { MediaAsset } from "@/media/types";
 import { mediaSupportsAudio } from "@/media/media-utils";
@@ -47,7 +48,10 @@ import {
 	getSourceAudioActionLabel,
 	isSourceAudioSeparated,
 } from "@/timeline/audio-separation";
-import { buildWaveformGainSamples, isElementMuted } from "@/timeline/audio-state";
+import {
+	buildWaveformGainSamples,
+	isElementMuted,
+} from "@/timeline/audio-state";
 import { getTimelinePixelsPerSecond } from "@/timeline";
 import { buildWaveformSourceKey } from "@/media/waveform-summary";
 import { addMediaTime, type MediaTime, TICKS_PER_SECOND } from "@/wasm";
@@ -74,6 +78,7 @@ import {
 	Exchange01Icon,
 	KeyframeIcon,
 	MagicWand05Icon,
+	HtmlFiveIcon,
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { uppercase } from "@/utils/string";
@@ -909,7 +914,9 @@ function TextElementContent({
 	return (
 		<div className="flex size-full items-center justify-start pl-2">
 			<span className="truncate text-xs text-white">
-				{typeof element.params.content === "string" ? element.params.content : ""}
+				{typeof element.params.content === "string"
+					? element.params.content
+					: ""}
 			</span>
 		</div>
 	);
@@ -1178,7 +1185,47 @@ function ElementContent({ element, track }: ElementContentProps) {
 		case "video":
 		case "image":
 			return <TiledMediaContent element={element} track={track} />;
+		case "hyperframes":
+			return <HyperframesElementContent element={element} />;
 	}
+}
+
+function HyperframesElementContent({
+	element,
+}: {
+	element: HyperframesElement;
+}) {
+	const isRendered = Boolean(element.renderedMediaId);
+	return (
+		<div
+			className="absolute inset-0 flex items-end"
+			style={{
+				background:
+					"linear-gradient(105deg, #1b1b2b 0%, #26264a 55%, #3b2d5e 100%)",
+				pointerEvents: "none",
+			}}
+		>
+			<div className="absolute top-0 left-0 flex h-5 w-full items-center gap-1 bg-linear-to-b from-black/40 to-transparent pt-1 pl-1.5">
+				<HugeiconsIcon
+					icon={HtmlFiveIcon}
+					size={12}
+					className="text-white/80"
+				/>
+				<span className="truncate text-[0.6rem] leading-tight text-white/75">
+					{element.name}
+				</span>
+			</div>
+			<span
+				className={`mb-1 ml-1.5 rounded-sm px-1 py-px text-[9px] font-medium ${
+					isRendered
+						? "bg-emerald-500/20 text-emerald-300"
+						: "bg-amber-500/20 text-amber-300"
+				}`}
+			>
+				{isRendered ? "rendered" : "unrendered"}
+			</span>
+		</div>
+	);
 }
 
 function CopyMenuItem() {
