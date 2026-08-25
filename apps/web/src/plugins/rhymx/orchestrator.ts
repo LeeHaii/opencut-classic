@@ -9,7 +9,15 @@ import {
 	buildGraphicElement,
 	buildElementFromMedia,
 } from "@/timeline/element-utils";
-import { mediaTimeFromSeconds, ZERO_MEDIA_TIME, type MediaTime } from "@/wasm";
+import {
+	addMediaTime,
+	minMediaTime,
+	subMediaTime,
+	mediaTimeFromSeconds,
+	TICKS_PER_SECOND,
+	ZERO_MEDIA_TIME,
+	type MediaTime,
+} from "@/wasm";
 import type { ElementAnimations, ScalarAnimationKey } from "@/animation/types";
 import { buildSubtitleTextElement } from "@/subtitles/build-subtitle-text-element";
 import type { SubtitleCue } from "@/subtitles/types";
@@ -48,9 +56,11 @@ export async function applyPlan({
 }): Promise<ApplyResult> {
 	const acquirer = new MediaAcquirer();
 	const commands: Array<AddTrackCommand | InsertElementCommand> = [];
+	const laneTails = new Map<LaneKey, LaneTail>();
 
 	let insertedMedia = 0;
 	let insertedTemplates = 0;
+	let insertedCaptions = 0;
 	let skippedScenes = 0;
 	const total = scenes.length;
 	let done = 0;
@@ -90,6 +100,18 @@ export async function applyPlan({
 						placement: { mode: "auto" },
 					}),
 				);
+				fillGapFromLaneTail({
+					editor,
+					laneTails,
+					lane: "video",
+					nextStart: startTime,
+				});
+				recordLaneTail({
+					laneTails,
+					lane: "video",
+					element,
+					startTime,
+				});
 				insertedTemplates += 1;
 				insertedSomething = true;
 			} else if (scene.templateId) {
@@ -118,6 +140,18 @@ export async function applyPlan({
 							placement: { mode: "explicit", trackId: graphicTrackId },
 						}),
 					);
+					fillGapFromLaneTail({
+						editor,
+						laneTails,
+						lane: "graphic",
+						nextStart: startTime,
+					});
+					recordLaneTail({
+						laneTails,
+						lane: "graphic",
+						element,
+						startTime,
+					});
 					insertedTemplates += 1;
 					insertedSomething = true;
 				}
@@ -155,6 +189,18 @@ export async function applyPlan({
 						placement: { mode: "explicit", trackId: videoTrackId },
 					}),
 				);
+				fillGapFromLaneTail({
+					editor,
+					laneTails,
+					lane: "video",
+					nextStart: startTime,
+				});
+				recordLaneTail({
+					laneTails,
+					lane: "video",
+					element,
+					startTime,
+				});
 				insertedMedia += 1;
 				insertedSomething = true;
 			}
@@ -167,7 +213,6 @@ export async function applyPlan({
 		options.onProgress?.({ done, total });
 	}
 
-	let insertedCaptions = 0;
 	if (
 		options.captionCues &&
 		options.captionCues.length > 0 &&
@@ -199,6 +244,127 @@ export async function applyPlan({
 	}
 
 	return { insertedMedia, insertedTemplates, insertedCaptions, skippedScenes };
+}
+
+// --- Gap filling -------------------------------------------------------------
+
+/**
+ * Sequential scenes are planned back-to-back, but blanks appear when a scene
+ * is skipped or an element gets clamped shorter than its scene (stock clips
+ * shorter than the scene, templates at default length). The tail element in
+ * front of a blank is stretched so it reaches the next segment's start.
+ */
+type LaneKey = "video" | "graphic";
+
+interface GapFillableElement {
+	type: string;
+	startTime: MediaTime;
+	duration: MediaTime;
+	trimStart?: MediaTime;
+	trimEnd?: MediaTime;
+	sourceDuration?: MediaTime;
+	mediaId?: string;
+}
+
+interface LaneTail {
+	element: GapFillableElement;
+	endTicks: MediaTime;
+}
+
+function recordLaneTail({
+	laneTails,
+	lane,
+	element,
+	startTime,
+}: {
+	laneTails: Map<LaneKey, LaneTail>;
+	lane: LaneKey;
+	element: GapFillableElement;
+	startTime: MediaTime;
+}) {
+	laneTails.set(lane, {
+		element,
+		endTicks: addMediaTime({ a: startTime, b: element.duration }),
+	});
+}
+
+function fillGapFromLaneTail({
+	editor,
+	laneTails,
+	lane,
+	nextStart,
+}: {
+	editor: EditorCore;
+	laneTails: Map<LaneKey, LaneTail>;
+	lane: LaneKey;
+	nextStart: MediaTime;
+}) {
+	const tail = laneTails.get(lane);
+	if (!tail) return;
+	const gapTicks = subMediaTime({ a: nextStart, b: tail.endTicks });
+	if (gapTicks <= gapFillEpsilonTicks()) return;
+
+	const element = tail.element;
+	const currentDuration = element.duration;
+	const desiredDuration = addMediaTime({ a: currentDuration, b: gapTicks });
+	const capTicks = extensionCapTicks({ editor, element });
+	const nextDuration =
+		capTicks == null
+			? desiredDuration
+			: minMediaTime({ a: desiredDuration, b: capTicks });
+	if (nextDuration <= currentDuration) return;
+
+	const applied = subMediaTime({ a: nextDuration, b: currentDuration });
+	element.duration = nextDuration;
+	if (
+		element.sourceDuration != null &&
+		element.sourceDuration < nextDuration
+	) {
+		element.sourceDuration = nextDuration;
+	}
+	tail.endTicks = addMediaTime({ a: tail.endTicks, b: applied });
+}
+
+/**
+ * Max total duration an element can be stretched to. Images, graphics and
+ * HyperFrames compositions hold their last frame when extended, so they are
+ * uncapped; video/audio can only fill up to the intrinsic media length.
+ * Returns null for uncapped.
+ */
+function extensionCapTicks({
+	editor,
+	element,
+}: {
+	editor: EditorCore;
+	element: GapFillableElement;
+}): MediaTime | null {
+	const holdsLastFrame =
+		element.type === "image" ||
+		element.type === "graphic" ||
+		element.type === "hyperframes" ||
+		element.type === "text";
+	if (holdsLastFrame) return null;
+	if (element.type !== "video" && element.type !== "audio") return null;
+
+	const trims = addMediaTime({
+		a: element.trimStart ?? ZERO_MEDIA_TIME,
+		b: element.trimEnd ?? ZERO_MEDIA_TIME,
+	});
+	let intrinsic = element.sourceDuration ?? null;
+	if (element.mediaId) {
+		const asset = editor.media
+			.getAssets()
+			.find((item) => item.id === element.mediaId);
+		if (asset?.duration != null && asset.duration > 0) {
+			intrinsic = mediaTimeFromSeconds({ seconds: asset.duration });
+		}
+	}
+	if (intrinsic == null) return ZERO_MEDIA_TIME;
+	return subMediaTime({ a: intrinsic, b: trims });
+}
+
+function gapFillEpsilonTicks(): number {
+	return Math.round(TICKS_PER_SECOND * 0.02);
 }
 
 function kenBurnsAnimation({

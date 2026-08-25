@@ -30,6 +30,7 @@ import {
 import { useEditor } from "@/editor/use-editor";
 import type { EditorCore } from "@/core";
 import {
+	auditCompositionAnimation,
 	buildAgentPrompt,
 	buildSeedComposition,
 	extractHtml,
@@ -287,6 +288,7 @@ export function AiMotionPanelView() {
 					},
 				],
 			});
+			warnIfStatic({ elementId: element.id, html, state: store });
 		} catch (error) {
 			const cancelled =
 				error instanceof DOMException && error.name === "AbortError";
@@ -435,6 +437,7 @@ export function AiMotionPanelView() {
 				durationSecs: info.durationSecs,
 				conversationId: payload.conversationId,
 			});
+			warnIfStatic({ elementId, html, state });
 		},
 		[applyGeneratedHtml],
 	);
@@ -1218,6 +1221,28 @@ function summaryFromReply(text: string): string {
 	return withoutFence.length > 0
 		? withoutFence.slice(0, 2000)
 		: "Scene updated.";
+}
+
+function warnIfStatic({
+	elementId,
+	html,
+	state,
+}: {
+	elementId: string;
+	html: string;
+	state: ReturnType<typeof useHyperframesPanelStore.getState>;
+}) {
+	const animation = auditCompositionAnimation(html);
+	if (animation.hasTweens) return;
+	state.appendChat({
+		elementId,
+		message: {
+			id: newId(),
+			role: "system",
+			text: "This scene looks static — no seekable GSAP timeline was detected, so it will play as a frozen frame. Send \"animate every element with staggered entrances and exits\" to bring it to life.",
+			createdAt: new Date().toISOString(),
+		},
+	});
 }
 
 function errorMessage(error: unknown): string {

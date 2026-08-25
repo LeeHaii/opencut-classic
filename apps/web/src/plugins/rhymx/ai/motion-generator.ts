@@ -1,6 +1,8 @@
 import {
+	auditCompositionAnimation,
 	buildAgentPrompt,
 	buildSeedComposition,
+	deriveStyleDirection,
 	extractHtml,
 	quickValidate,
 	isNative,
@@ -80,6 +82,12 @@ export async function generateMotionSceneHtml({
 			"The AI did not return a valid motion scene. Try again or fall back to a template.",
 		);
 	}
+	const animation = auditCompositionAnimation(html);
+	if (!animation.hasTweens) {
+		throw new Error(
+			"The AI returned a static composition with no seekable animation timeline — it would render as a frozen frame. Retrying usually fixes it; otherwise this scene falls back to its template.",
+		);
+	}
 	return { html, compositionId, durationSecs: info.durationSecs };
 }
 
@@ -89,11 +97,19 @@ function buildMotionRequestText({
 	scene: MotionSceneInput;
 }): string {
 	const keywords = scene.keywords.filter(Boolean).slice(0, 8);
+	const direction = deriveStyleDirection(
+		[scene.visualIntent, ...keywords, scene.transcriptText].join(" "),
+	);
 	return `Create a motion-graphics scene for a narrated video.
 Visual direction: ${scene.visualIntent || "a clean, engaging title scene"}.
 Key ideas to emphasize on screen: ${keywords.length > 0 ? keywords.join(", ") : "the core message of the narration"}.
 Narration playing over this scene: "${scene.transcriptText.slice(0, 300)}".
-Design guidance: bold readable sans-serif typography with strong hierarchy, high contrast, generous safe margins, restrained color palette (one accent color), staggered entrance animations with clean easing, and a subtle background treatment. Text content should come from the key ideas and narration — keep on-screen text short and punchy. Do not use external images or videos; inline SVG shapes and unicode symbols are fine.`;
+Art direction — commit fully to this system and carry it through every element:
+Style direction: ${direction.name} (${direction.mood}).
+Palette: ${direction.palette}.
+Typography: ${direction.typography}.
+Motion character: ${direction.motion}.
+Additional guidance: strong readable hierarchy, generous safe margins, one accent color reserved for emphasis, staggered entrances with overlapping flow so motion never stops dead. Text content should come from the key ideas and narration — keep on-screen text short and punchy. Do not use external images or videos; inline SVG shapes and unicode symbols are fine.`;
 }
 
 async function runNativeAgent({

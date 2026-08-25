@@ -1,5 +1,6 @@
 import type { PlannedScene } from "../types";
 import { isRecord } from "./json";
+import { extractJsonPayload } from "./groq-client";
 
 const MAX_NARRATION_CHARS = 60_000;
 const MAX_INTENT_CHARS = 220;
@@ -47,7 +48,16 @@ export function parseScenePlan({
 	try {
 		parsed = JSON.parse(raw);
 	} catch {
-		throw new Error("Planner returned invalid JSON");
+		const payload = extractJsonPayload(raw);
+		if (payload) {
+			try {
+				parsed = JSON.parse(payload);
+			} catch {
+				throw new Error("Planner returned invalid JSON");
+			}
+		} else {
+			throw new Error("Planner returned invalid JSON");
+		}
 	}
 
 	const container = isRecord(parsed) ? parsed : null;

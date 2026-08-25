@@ -1,6 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import { extractHtml, quickValidate } from "../src/extract.js";
+import { extractHtml, quickValidate, auditCompositionAnimation } from "../src/extract.js";
 import { buildSeedComposition, buildAgentPrompt } from "../src/prompt.js";
+import {
+	buildMotionDesignSkills,
+	deriveStyleDirection,
+} from "../src/design-skills.js";
 import {
 	preparePreviewHtml,
 	PREVIEW_MESSAGE_SOURCE,
@@ -76,7 +80,66 @@ describe("prompt + seed", () => {
 		});
 		expect(prompt).toContain('id="s1"');
 		expect(prompt).toContain("USER: make it red");
+		expect(prompt).toContain("MOTION DESIGN CRAFT");
+		expect(prompt).toContain("FLOW & CHOREOGRAPHY");
+		expect(prompt).toContain('window.__timelines["s1"]');
+		expect(prompt).toContain("MANDATORY ANIMATION CONTRACT");
 		expect(prompt).not.toContain("${");
+	});
+});
+
+describe("auditCompositionAnimation", () => {
+	test("seed composition passes the animation audit", () => {
+		const seed = buildSeedComposition({
+			compositionId: "a1",
+			width: 1280,
+			height: 720,
+			durationSecs: 4,
+			fps: 30,
+		});
+		expect(auditCompositionAnimation(seed)).toEqual({
+			hasTimeline: true,
+			hasTweens: true,
+		});
+	});
+
+	test("static compositions fail the audit", () => {
+		const staticDoc = sample("s9");
+		expect(auditCompositionAnimation(staticDoc)).toEqual({
+			hasTimeline: false,
+			hasTweens: false,
+		});
+
+		const timelineWithoutTweens = `<!DOCTYPE html><html><body>
+<div data-composition-id="t2" data-start="0" data-duration="3"></div>
+<script>window.__timelines = window.__timelines || {}; window.__timelines["t2"] = gsap.timeline({ paused: true });</script>
+</body></html>`;
+		expect(auditCompositionAnimation(timelineWithoutTweens)).toEqual({
+			hasTimeline: true,
+			hasTweens: false,
+		});
+	});
+});
+
+describe("design skills", () => {
+	test("guidance scales beats to duration", () => {
+		const short = buildMotionDesignSkills(3);
+		const long = buildMotionDesignSkills(30);
+		expect(short).toContain("about 2 beats");
+		expect(long).toContain("about 7 beats");
+	});
+
+	test("derives style direction from keywords", () => {
+		const tech = deriveStyleDirection(
+			"data dashboard for a developer analytics platform",
+		);
+		expect(tech.name).toBe("Dark tech / AI-native");
+
+		const hype = deriveStyleDirection("hype gaming launch trailer");
+		expect(hype.name).toBe("Bold kinetic / hype edit");
+
+		const fallback = deriveStyleDirection("something completely unclassifiable");
+		expect(fallback.name).toBe("Clean modern minimal");
 	});
 });
 

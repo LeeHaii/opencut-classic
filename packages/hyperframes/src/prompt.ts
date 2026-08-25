@@ -1,4 +1,5 @@
 import type { AgentChatMessage } from "./types";
+import { buildMotionDesignSkills } from "./design-skills";
 
 export interface PromptContext {
 	request: string
@@ -51,15 +52,18 @@ Hard requirements:
 - Keep a single composition root with id="${compositionId}", data-composition-id="${compositionId}", data-start="0", data-duration="${durationSecs}", data-width="${width}", data-height="${height}".
 - The child root MUST NOT have data-track-index and its data-start must remain exactly zero; the host timeline controls where the whole child starts.
 - Every timed visual uses class="clip", data-start and data-duration in seconds, an integer data-track-index, plus a unique stable id attribute.
+- MANDATORY ANIMATION CONTRACT: load GSAP (<script src="https://cdn.jsdelivr.net/npm/gsap@3/dist/gsap.min.js"></script>) and register exactly ONE paused timeline as window.__timelines["${compositionId}"]. Drive ALL motion through tweens added to it. A composition without this registered timeline renders as a frozen frame and is invalid.
+- Never animate with CSS transitions, CSS @keyframes, setTimeout, Date.now, Math.random, autoplaying media or wall-clock timing — CSS-only motion cannot be seeked and will appear static in preview and export.
+- Every visual element must be revealed or moved by timeline tweens (from/fromTo/to). A fully static composition is a failure. Start each element hidden (opacity 0 or masked) right at its clip's data-start so motion is always visible while playing; give elements that end early an exit tween.
 - Do not create a master timeline and do not use data-composition-src. Return only the new self-contained child animation.
-- Animations must be deterministic and seekable. Prefer a paused GSAP timeline registered at window.__timelines["${compositionId}"]. No setTimeout, Date.now, Math.random, autoplaying media or wall-clock CSS animations.
 - The composition plays at ${fps} fps; keep all timing in whole seconds or clean fractions that align to ${fps} fps frames.
 - Keep the exact child duration ${durationSecs} seconds. Do not shorten or extend it.
 - Preserve any existing local media URL exactly unless the user asks to remove it. Local media uses ${"opencut-media://local/..."} URLs — reference them as-is.
 - Do not use shell commands, network APIs, cookies, localStorage, sessionStorage, the parent window or desktop APIs. CDN script tags are allowed.
 - Filesystem access is restricted to view_file on the exact reference files listed below. Never use find_by_name/grep_search/run_command and never search outside the workspace.
-- Before the html fence, give a concise one-sentence summary of what you made. Do not output a diff.
+- 	Before the html fence, give a concise one-sentence summary of what you made. Do not output a diff.
 ${references}${history}
+${buildMotionDesignSkills(durationSecs)}
 User request: ${request}`;
 }
 
