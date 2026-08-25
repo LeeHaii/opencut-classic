@@ -16,6 +16,7 @@ import { EffectsView } from "@/effects/components/assets-view";
 import { AiPanelView } from "@/plugins/rhymx/ui/ai-panel-view";
 import { MotionLibraryView } from "@/plugins/rhymx/ui/motion-library-view";
 import { AiMotionPanelView } from "@/hyperframes/components/ai-motion-panel";
+import { StudioPanelView } from "@/hyperframes/components/studio-panel";
 
 export function AssetsPanel() {
 	const { activeTab } = useAssetsPanelStore();
@@ -40,6 +41,7 @@ export function AssetsPanel() {
 		ai: <AiPanelView />,
 		motion: <MotionLibraryView />,
 		hyperframes: <AiMotionPanelView />,
+		studio: <StudioPanelView />,
 		settings: <SettingsView />,
 	};
 

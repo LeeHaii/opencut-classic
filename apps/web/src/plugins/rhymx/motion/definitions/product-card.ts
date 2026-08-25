@@ -25,11 +25,23 @@ interface ProductCardParams {
 const PRODUCT_PARAMS: ParamDefinition<keyof ProductCardParams & string>[] = [
 	{ key: "name", label: "Name", type: "text", default: "Aurora Lamp" },
 	{ key: "price", label: "Price", type: "text", default: "$129" },
-	{ key: "tagline", label: "Tagline", type: "text", default: "Sunset light on demand" },
+	{
+		key: "tagline",
+		label: "Tagline",
+		type: "text",
+		default: "Sunset light on demand",
+	},
 	{ key: "accentColor", label: "Accent", type: "color", default: "#fb923c" },
 ];
 
-function renderProductCard({ ctx, params, width, height, localTime = 0, durationSec = 4 }: GraphicRenderContext): void {
+function renderProductCard({
+	ctx,
+	params,
+	width,
+	height,
+	localTime = 0,
+	durationSec = 4,
+}: GraphicRenderContext): void {
 	ctx.clearRect(0, 0, width, height);
 	const slide = easeOutCubic({ t: localTime / 0.7 });
 	const pricePop = clamp01({ value: (localTime - 0.4) * 3 });
@@ -43,7 +55,14 @@ function renderProductCard({ ctx, params, width, height, localTime = 0, duration
 	const cardHeight = height * 0.56;
 	const cardX = width * 0.1 + 90 * (1 - slide);
 	const cardY = height * 0.22 - 30 * (1 - slide);
-	drawGlassCard({ ctx, x: cardX, y: cardY, width: cardWidth, height: cardHeight, radius: 30 });
+	drawGlassCard({
+		ctx,
+		x: cardX,
+		y: cardY,
+		width: cardWidth,
+		height: cardHeight,
+		radius: 30,
+	});
 
 	setFont({ ctx, size: height * 0.055, weight: 800 });
 	ctx.fillStyle = TEXT_PRIMARY;
@@ -54,7 +73,11 @@ function renderProductCard({ ctx, params, width, height, localTime = 0, duration
 		maxWidth: cardWidth - 80,
 	});
 	lines.forEach((line, index) => {
-		ctx.fillText(line, cardX + 40, cardY + cardHeight * 0.24 + index * height * 0.07);
+		ctx.fillText(
+			line,
+			cardX + 40,
+			cardY + cardHeight * 0.24 + index * height * 0.07,
+		);
 	});
 
 	if (pricePop > 0) {
@@ -67,7 +90,11 @@ function renderProductCard({ ctx, params, width, height, localTime = 0, duration
 		ctx.fill();
 		setFont({ ctx, size: height * 0.042, weight: 800 });
 		ctx.fillStyle = "#0f172a";
-		ctx.fillText(textParam({ params, key: "price" }), chipX + 24, chipY + height * 0.05);
+		ctx.fillText(
+			textParam({ params, key: "price" }),
+			chipX + 24,
+			chipY + height * 0.05,
+		);
 	}
 
 	if (textParam({ params, key: "tagline" })) {

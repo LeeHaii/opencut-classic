@@ -169,8 +169,8 @@ export function MediaView() {
 					valueB = b.duration || 0;
 					break;
 				case "size":
-					valueA = a.file.size;
-					valueB = b.file.size;
+					valueA = a.file?.size ?? 0;
+					valueB = b.file?.size ?? 0;
 					break;
 				default:
 					return 0;
@@ -314,15 +314,35 @@ function MediaItemWithContextMenu({
 		ids: string[];
 	}) => void;
 }) {
+	const editor = useEditor();
 	const { isSelected, selectedIds } = useSelection();
 	const idsToDelete = isSelected(item.id) ? selectedIds : [item.id];
 	const deleteLabel =
 		idsToDelete.length > 1 ? `Delete ${idsToDelete.length} items` : "Delete";
 
+	const handleDownloadOffline = (asset: MediaAsset) => {
+		const projectId = editor.project.getActiveOrNull()?.metadata.id;
+		if (!projectId) return;
+		toast.promise(
+			editor.media.downloadRemoteAsset({ projectId, id: asset.id }),
+			{
+				loading: "Downloading for offline use…",
+				success: "Saved to project media",
+				error: (error) =>
+					error instanceof Error ? error.message : "Download failed",
+			},
+		);
+	};
+
 	return (
 		<ContextMenu>
 			<ContextMenuTrigger asChild>{children}</ContextMenuTrigger>
 			<ContextMenuContent>
+				{item.remoteUrl && !item.file && (
+					<ContextMenuItem onClick={() => handleDownloadOffline(item)}>
+						Download for offline
+					</ContextMenuItem>
+				)}
 				<ContextMenuItem>Export clips</ContextMenuItem>
 				<ContextMenuItem
 					variant="destructive"

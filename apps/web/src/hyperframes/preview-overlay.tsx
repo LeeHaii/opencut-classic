@@ -194,15 +194,37 @@ export function getHyperframesPreviewOverlaySource({
 	tracks,
 	timelineTime,
 	projectCanvasSize,
+	studioElementId,
 }: {
 	tracks: SceneTracks;
 	timelineTime: number;
 	projectCanvasSize: { width: number; height: number };
+	/** Scene Studio focus mode: always render this element, ignoring playhead. */
+	studioElementId?: string | null;
 }): PreviewOverlaySourceResult {
 	const orderedTracks: TimelineTrack[] = [
 		...tracks.overlay,
 		tracks.main,
 	].reverse();
+
+	if (studioElementId) {
+		for (const track of orderedTracks) {
+			const match = track.elements.find(
+				(element): element is HyperframesElement =>
+					element.id === studioElementId &&
+					element.type === "hyperframes" &&
+					element.html.trim().length > 0,
+			);
+			if (match) {
+				return buildStudioOverlay({
+					element: match,
+					projectCanvasSize,
+				});
+			}
+		}
+		return { definitions: [], instances: [] };
+	}
+
 	let activeElement: HyperframesElement | null = null;
 	for (const track of orderedTracks) {
 		if ("hidden" in track && track.hidden) continue;
@@ -240,6 +262,35 @@ export function getHyperframesPreviewOverlaySource({
 						projectCanvasSize={projectCanvasSize}
 						sceneViewportSize={{ width: sceneWidth, height: sceneHeight }}
 						timelineTime={timelineTime}
+					/>
+				),
+			},
+		],
+	};
+}
+
+function buildStudioOverlay({
+	element,
+	projectCanvasSize,
+}: {
+	element: HyperframesElement;
+	projectCanvasSize: { width: number; height: number };
+}): PreviewOverlaySourceResult {
+	return {
+		definitions: [],
+		instances: [
+			{
+				id: `hyperframes-studio-${element.id}`,
+				mount: { kind: "scene" },
+				plane: "over-interaction",
+				pointerEvents: "none",
+				zIndex: 30,
+				render: ({ sceneWidth, sceneHeight }) => (
+					<HyperframesPreview
+						element={element}
+						projectCanvasSize={projectCanvasSize}
+						sceneViewportSize={{ width: sceneWidth, height: sceneHeight }}
+						timelineTime={0}
 					/>
 				),
 			},

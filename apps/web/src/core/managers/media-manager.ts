@@ -73,11 +73,12 @@ export class MediaManager {
 						assetId: uniqueIds[0],
 					})
 				: new BatchCommand(
-						uniqueIds.map((id) =>
-							new RemoveMediaAssetCommand({
-								projectId,
-								assetId: id,
-							}),
+						uniqueIds.map(
+							(id) =>
+								new RemoveMediaAssetCommand({
+									projectId,
+									assetId: id,
+								}),
 						),
 					);
 
@@ -99,6 +100,53 @@ export class MediaManager {
 		} finally {
 			this.isLoading = false;
 			this.notify();
+		}
+	}
+
+	/**
+	 * Downloads a remote (streamed) asset's bytes to the project so it no
+	 * longer depends on the network. The in-memory asset is replaced and
+	 * persisted; the decoder cache is reset so playback re-inits locally.
+	 */
+	async downloadRemoteAsset({
+		projectId,
+		id,
+	}: {
+		projectId: string;
+		id: string;
+	}): Promise<MediaAsset | null> {
+		const asset = this.assets.find((item) => item.id === id);
+		if (!asset) return null;
+		if (!asset.remoteUrl || asset.file) return asset;
+
+		const response = await fetch(asset.remoteUrl);
+		if (!response.ok) {
+			throw new Error(`Download failed (${response.status})`);
+		}
+		const blob = await response.blob();
+		const file = new File([blob], asset.name, {
+			type: blob.type || "video/mp4",
+			lastModified: Date.now(),
+		});
+		const objectUrl = URL.createObjectURL(file);
+
+		const updated: MediaAsset = {
+			...asset,
+			file,
+			url: objectUrl,
+		};
+		this.assets = this.assets.map((item) => (item.id === id ? updated : item));
+		this.notify();
+
+		try {
+			await storageService.saveMediaAsset({ projectId, mediaAsset: updated });
+			videoCache.clearVideo({ mediaId: id });
+			return updated;
+		} catch (error) {
+			URL.revokeObjectURL(objectUrl);
+			this.assets = this.assets.map((item) => (item.id === id ? asset : item));
+			this.notify();
+			throw error;
 		}
 	}
 

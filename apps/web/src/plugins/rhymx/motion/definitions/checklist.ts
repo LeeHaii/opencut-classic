@@ -1,12 +1,7 @@
 import type { ParamDefinition } from "@/params";
 import type { GraphicDefinition, GraphicRenderContext } from "@/graphics";
 import { exitFactor, staggeredProgress, clamp01 } from "../animation";
-import {
-	accent,
-	setFont,
-	textParam,
-	TEXT_PRIMARY,
-} from "../canvas";
+import { accent, setFont, textParam, TEXT_PRIMARY } from "../canvas";
 import type { MotionTemplate } from "../library-types";
 
 const SOURCE_WIDTH = 1600;
@@ -19,7 +14,12 @@ interface ChecklistParams {
 }
 
 const CHECKLIST_PARAMS: ParamDefinition<keyof ChecklistParams & string>[] = [
-	{ key: "title", label: "Title", type: "text", default: "What you will learn" },
+	{
+		key: "title",
+		label: "Title",
+		type: "text",
+		default: "What you will learn",
+	},
 	{
 		key: "items",
 		label: "Items (one per line)",
@@ -29,7 +29,14 @@ const CHECKLIST_PARAMS: ParamDefinition<keyof ChecklistParams & string>[] = [
 	{ key: "accentColor", label: "Accent", type: "color", default: "#34d399" },
 ];
 
-function renderChecklist({ ctx, params, width, height, localTime = 0, durationSec = 5 }: GraphicRenderContext): void {
+function renderChecklist({
+	ctx,
+	params,
+	width,
+	height,
+	localTime = 0,
+	durationSec = 5,
+}: GraphicRenderContext): void {
 	ctx.clearRect(0, 0, width, height);
 	const color = accent({ params });
 	const title = textParam({ params, key: "title" });
@@ -52,7 +59,11 @@ function renderChecklist({ ctx, params, width, height, localTime = 0, durationSe
 
 	setFont({ ctx, size: height * 0.042, weight: 600 });
 	items.forEach((item, index) => {
-		const enter = staggeredProgress({ localTime, index: index + 1, staggerSec: 0.18 });
+		const enter = staggeredProgress({
+			localTime,
+			index: index + 1,
+			staggerSec: 0.18,
+		});
 		if (enter <= 0) {
 			return;
 		}
@@ -63,7 +74,13 @@ function renderChecklist({ ctx, params, width, height, localTime = 0, durationSe
 		ctx.lineWidth = height * 0.008;
 		ctx.lineCap = "round";
 		ctx.beginPath();
-		ctx.arc(width * 0.17, rowY - height * 0.014, height * 0.022, 0, Math.PI * 2);
+		ctx.arc(
+			width * 0.17,
+			rowY - height * 0.014,
+			height * 0.022,
+			0,
+			Math.PI * 2,
+		);
 		ctx.stroke();
 
 		const checkProgress = staggeredProgress({

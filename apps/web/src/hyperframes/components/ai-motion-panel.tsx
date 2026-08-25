@@ -13,6 +13,7 @@ import {
 	ExternalLink,
 	Film,
 	ImagePlus,
+	Layers,
 	SendHorizontal,
 	Sparkles,
 	UserRound,
@@ -54,6 +55,8 @@ import { frameRateToFloat } from "@/fps/utils";
 import { renderHyperframesElement } from "../render-element";
 import { runBrowserHyperframesAgent } from "../browser-agent";
 import { useHyperframesPanelStore } from "../store";
+import { useHyperframesStudioStore } from "../studio-store";
+import { useAssetsPanelStore } from "@/components/editor/panels/assets/assets-panel-store";
 import { loadApiKeys } from "@/plugins/rhymx/settings";
 import type {
 	HyperframesElement,
@@ -343,8 +346,7 @@ export function AiMotionPanelView() {
 			false;
 		if (hasHtml && !isRunning) {
 			void handleSend({
-				request:
-					`Change the total composition duration to exactly ${formatLengthLabel(nextSecs)} seconds. Keep the existing visual style and content, and retime or extend every clip so the animation fills the full duration.`,
+				request: `Change the total composition duration to exactly ${formatLengthLabel(nextSecs)} seconds. Keep the existing visual style and content, and retime or extend every clip so the animation fills the full duration.`,
 			});
 		}
 	};
@@ -539,6 +541,15 @@ export function AiMotionPanelView() {
 		}
 	};
 
+	/** Opens the in-app Scene Studio focused on the active scene. */
+	const openInStudio = () => {
+		const entry = activeEntry;
+		if (!entry) return;
+		useHyperframesStudioStore.getState().enter({ elementId: entry.element.id });
+		editor.playback.seek({ time: entry.element.startTime });
+		useAssetsPanelStore.getState().setActiveTab("studio");
+	};
+
 	useEffect(() => {
 		if (!native) return;
 		let disposed = false;
@@ -600,8 +611,8 @@ export function AiMotionPanelView() {
 					<div className="border-border/60 bg-muted/30 text-muted-foreground flex items-start gap-1.5 rounded-md border px-2 py-1.5 text-[10px] leading-relaxed">
 						<Sparkles className="text-primary mt-px size-3 shrink-0" />
 						<p>
-							<span className="text-foreground font-medium">Browser AI</span>{" "}
-							— Groq generates the scene; OpenCut renders HTML/CSS/GSAP locally
+							<span className="text-foreground font-medium">Browser AI</span> —
+							Groq generates the scene; OpenCut renders HTML/CSS/GSAP locally
 							with WebCodecs.
 						</p>
 					</div>
@@ -781,6 +792,17 @@ export function AiMotionPanelView() {
 							</div>
 						)}
 
+						<Button
+							variant="secondary"
+							size="sm"
+							className="h-8 w-full text-[11px]"
+							onClick={openInStudio}
+							disabled={!activeEntry.element.html}
+						>
+							<Layers className="size-3.5" />
+							Edit in Studio
+						</Button>
+
 						<div className="grid grid-cols-2 gap-1.5 border-t pt-2">
 							{native ? (
 								<Button
@@ -926,9 +948,7 @@ function ChatHistory({ messages }: { messages: AgentChatMessage[] }) {
 				<div className="bg-primary/10 text-primary mb-1.5 flex size-6 items-center justify-center rounded-full">
 					<Bot className="size-3" />
 				</div>
-				<p className="text-foreground text-[11px] font-medium">
-					Build with AI
-				</p>
+				<p className="text-foreground text-[11px] font-medium">Build with AI</p>
 				<p className="text-muted-foreground mt-0.5 text-[10px] leading-relaxed">
 					Describe a title, data card, transition, or complete motion scene.
 				</p>
@@ -1025,7 +1045,9 @@ function PromptInput({
 		for (const file of Array.from(files)) {
 			if (!file.type.startsWith("image/")) continue;
 			if (file.size > MAX_ATTACHMENT_BYTES) {
-				toast.error(`"${file.name}" exceeds the ${MAX_ATTACHMENT_MB} MB image limit`);
+				toast.error(
+					`"${file.name}" exceeds the ${MAX_ATTACHMENT_MB} MB image limit`,
+				);
 				continue;
 			}
 			try {

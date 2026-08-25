@@ -220,9 +220,10 @@ export async function groqChatText({
 }: GroqChatOptions): Promise<string> {
 	return groqChat({
 		apiKey,
-		model: images && images.length > 0 && model === GROQ_PLANNER_MODEL
-			? GROQ_VISION_MODEL
-			: model,
+		model:
+			images && images.length > 0 && model === GROQ_PLANNER_MODEL
+				? GROQ_VISION_MODEL
+				: model,
 		systemPrompt,
 		userMessage,
 		images,

@@ -78,8 +78,7 @@ export function parseScenePlan({
 					? record.visualIntent.trim().slice(0, MAX_INTENT_CHARS)
 					: "",
 			keywords: keywords.length > 0 ? keywords : ["b-roll"],
-			treatment:
-				record.treatment === "motion" ? "motion" : "media",
+			treatment: record.treatment === "motion" ? "motion" : "media",
 		});
 	}
 

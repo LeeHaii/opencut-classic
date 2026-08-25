@@ -36,6 +36,7 @@ import {
 } from "@/timeline/bookmarks/index";
 import { getHyperframesPreviewOverlaySource } from "@/hyperframes/preview-overlay";
 import { usePlaybackTime } from "@/hyperframes/use-playback-time";
+import { useHyperframesStudioStore } from "@/hyperframes/studio-store";
 import { useRhymxStore } from "@/plugins/rhymx/state/rhymx-store";
 import { getStockPreviewOverlaySource } from "@/plugins/rhymx/ui/stock-preview-overlay";
 import type { TScene } from "@/timeline";
@@ -200,6 +201,9 @@ function PlaybackOverlayPreviewPanel({
 		(state) => state.setOverlayVisibility,
 	);
 	const previewCandidate = useRhymxStore((state) => state.previewCandidate);
+	const studioElementId = useHyperframesStudioStore(
+		(state) => state.activeElementId,
+	);
 	const showBookmarkNotes = isPreviewOverlayVisible({
 		overlay: bookmarkNotesPreviewOverlay,
 		overlays,
@@ -233,6 +237,7 @@ function PlaybackOverlayPreviewPanel({
 								tracks: activeScene.tracks,
 								timelineTime: currentTime,
 								projectCanvasSize: canvasSize,
+								studioElementId,
 							})
 						: { definitions: [], instances: [] },
 					previewCandidate
@@ -249,6 +254,7 @@ function PlaybackOverlayPreviewPanel({
 			currentTime,
 			previewCandidate,
 			showBookmarkNotes,
+			studioElementId,
 		],
 	);
 

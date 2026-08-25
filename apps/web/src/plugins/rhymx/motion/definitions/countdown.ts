@@ -21,17 +21,35 @@ interface CountdownParams {
 }
 
 const COUNTDOWN_PARAMS: ParamDefinition<keyof CountdownParams & string>[] = [
-	{ key: "seconds", label: "Seconds", type: "number", default: 5, min: 1, max: 60, step: 1 },
+	{
+		key: "seconds",
+		label: "Seconds",
+		type: "number",
+		default: 5,
+		min: 1,
+		max: 60,
+		step: 1,
+	},
 	{ key: "label", label: "Label", type: "text", default: "Get ready" },
 	{ key: "accentColor", label: "Accent", type: "color", default: "#f472b6" },
 ];
 
-function renderCountdown({ ctx, params, width, height, localTime = 0, durationSec = 5 }: GraphicRenderContext): void {
+function renderCountdown({
+	ctx,
+	params,
+	width,
+	height,
+	localTime = 0,
+	durationSec = 5,
+}: GraphicRenderContext): void {
 	ctx.clearRect(0, 0, width, height);
 	const enter = entranceProgress({ localTime });
 	const exit = exitFactor({ localTime, durationSec });
 	const color = accent({ params });
-	const total = Math.max(1, numberParam({ params, key: "seconds", fallback: 5 }));
+	const total = Math.max(
+		1,
+		numberParam({ params, key: "seconds", fallback: 5 }),
+	);
 
 	const remaining = Math.max(0, total - localTime);
 	const numeral = String(Math.ceil(remaining));
@@ -52,11 +70,21 @@ function renderCountdown({ ctx, params, width, height, localTime = 0, durationSe
 
 	ctx.strokeStyle = color;
 	ctx.beginPath();
-	ctx.arc(centerX, centerY, radius, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * fraction);
+	ctx.arc(
+		centerX,
+		centerY,
+		radius,
+		-Math.PI / 2,
+		-Math.PI / 2 + Math.PI * 2 * fraction,
+	);
 	ctx.stroke();
 
 	const popScale = clamp01({ value: (1 - fraction) * 1.6 });
-	setFont({ ctx, size: height * 0.16 * (1 + 0.12 * (1 - popScale)), weight: 800 });
+	setFont({
+		ctx,
+		size: height * 0.16 * (1 + 0.12 * (1 - popScale)),
+		weight: 800,
+	});
 	ctx.fillStyle = TEXT_PRIMARY;
 	ctx.textAlign = "center";
 	ctx.globalAlpha = exit * clamp01({ value: fraction * 3 });
@@ -66,7 +94,11 @@ function renderCountdown({ ctx, params, width, height, localTime = 0, durationSe
 	if (textParam({ params, key: "label" })) {
 		setFont({ ctx, size: height * 0.04, weight: 600 });
 		ctx.fillStyle = withAlpha({ hex: color, alpha: 0.95 });
-		ctx.fillText(textParam({ params, key: "label" }), centerX, centerY + radius + height * 0.08);
+		ctx.fillText(
+			textParam({ params, key: "label" }),
+			centerX,
+			centerY + radius + height * 0.08,
+		);
 	}
 	ctx.textAlign = "left";
 	ctx.restore();

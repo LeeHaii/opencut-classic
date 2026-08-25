@@ -80,6 +80,7 @@ import {
 	KeyframeIcon,
 	MagicWand05Icon,
 	HtmlFiveIcon,
+	Layers01Icon,
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { uppercase } from "@/utils/string";
@@ -89,6 +90,7 @@ import { cn } from "@/utils/ui";
 import { usePropertiesStore } from "@/components/editor/panels/properties/stores/properties-store";
 import { getTrackTypeForElementType } from "@/timeline/placement/compatibility";
 import { useTimelineStore } from "@/timeline/timeline-store";
+import { useHyperframesStudioStore } from "@/hyperframes/studio-store";
 import { KEYFRAME_LANE_HEIGHT_PX } from "./layout";
 import {
 	getExpandedRows,
@@ -312,6 +314,7 @@ export function TimelineElement({
 	const toggleElementExpanded = useTimelineStore(
 		(s) => s.toggleElementExpanded,
 	);
+	const editor = useEditor();
 	const expandedRows = useMemo(
 		() =>
 			isExpanded ? getExpandedRows({ animations: element.animations }) : [],
@@ -503,6 +506,21 @@ export function TimelineElement({
 								Replace media
 							</ContextMenuItem>
 						</>
+					)}
+					{element.type === "hyperframes" && (
+						<ContextMenuItem
+							icon={<HugeiconsIcon icon={Layers01Icon} />}
+							onClick={(event: React.MouseEvent) => {
+								event.stopPropagation();
+								useHyperframesStudioStore
+									.getState()
+									.enter({ elementId: element.id });
+								useAssetsPanelStore.getState().setActiveTab("studio");
+								editor.playback.seek({ time: element.startTime });
+							}}
+						>
+							Edit in Studio
+						</ContextMenuItem>
 					)}
 					<ContextMenuSeparator />
 					<DeleteMenuItem

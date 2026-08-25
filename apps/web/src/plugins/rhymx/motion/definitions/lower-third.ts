@@ -1,6 +1,11 @@
 import type { ParamDefinition } from "@/params";
 import type { GraphicDefinition, GraphicRenderContext } from "@/graphics";
-import { entranceProgress, exitFactor, clamp01, easeOutCubic } from "../animation";
+import {
+	entranceProgress,
+	exitFactor,
+	clamp01,
+	easeOutCubic,
+} from "../animation";
 import {
 	accent,
 	roundRectPath,
@@ -26,7 +31,14 @@ const LOWER_THIRD_PARAMS: ParamDefinition<keyof LowerThirdParams & string>[] = [
 	{ key: "accentColor", label: "Accent", type: "color", default: "#38bdf8" },
 ];
 
-function renderLowerThird({ ctx, params, width, height, localTime = 0, durationSec = 4 }: GraphicRenderContext): void {
+function renderLowerThird({
+	ctx,
+	params,
+	width,
+	height,
+	localTime = 0,
+	durationSec = 4,
+}: GraphicRenderContext): void {
 	ctx.clearRect(0, 0, width, height);
 	const slide = easeOutCubic({ t: localTime / 0.6 });
 	const enter = entranceProgress({ localTime });
@@ -43,7 +55,15 @@ function renderLowerThird({ ctx, params, width, height, localTime = 0, durationS
 	const barX = width * 0.06 - barWidth * (1 - slide);
 	const barY = height * 0.74;
 	ctx.fillStyle = withAlpha({ hex: color, alpha: 0.9 });
-	ctx.fill(roundRectPath({ x: barX, y: barY, width: 8 * enter + 2, height: barHeight, radius: 4 }));
+	ctx.fill(
+		roundRectPath({
+			x: barX,
+			y: barY,
+			width: 8 * enter + 2,
+			height: barHeight,
+			radius: 4,
+		}),
+	);
 
 	ctx.fillStyle = withAlpha({ hex: "#0f172a", alpha: 0.78 });
 	ctx.fill(

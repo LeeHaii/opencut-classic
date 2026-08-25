@@ -1,5 +1,4 @@
 import type { EditorCore } from "@/core";
-import { readVideoFile } from "@/media/mediabunny";
 import type { StockCandidate } from "../types";
 
 const MAX_DOWNLOAD_BYTES = 500 * 1024 * 1024;
@@ -16,8 +15,12 @@ function fileNameFor({ candidate }: { candidate: StockCandidate }): string {
 }
 
 /**
- * Downloads a stock candidate into the project media library.
- * Deduplicated by candidate id via the returned cache.
+ * Registers a stock candidate for timeline use.
+ *
+ * Videos are registered as remote streaming assets: zero disk usage, frames
+ * decode on demand over HTTP range requests via mediabunny's UrlSource.
+ * Images are small and need CORS-safe canvas access, so they are still
+ * downloaded. Deduplicated by candidate id via the returned cache.
  */
 export class MediaAcquirer {
 	private acquired = new Map<string, AcquiredMedia>();
@@ -38,6 +41,27 @@ export class MediaAcquirer {
 		const cached = this.getCached({ candidateId: candidate.id });
 		if (cached) {
 			return cached;
+		}
+
+		if (candidate.kind === "video") {
+			const asset = await editor.media.addMediaAsset({
+				projectId: editor.project.getActive().metadata.id,
+				asset: {
+					name: `${candidate.provider} · ${fileNameFor({ candidate })}`,
+					type: "video",
+					remoteUrl: candidate.sourceUrl,
+					thumbnailUrl: candidate.thumbnailUrl,
+					width: candidate.width,
+					height: candidate.height,
+					duration: candidate.durationSec,
+				},
+			});
+			if (!asset) {
+				throw new Error("Could not register the streaming clip");
+			}
+			const acquired: AcquiredMedia = { mediaId: asset.id, candidate };
+			this.acquired.set(candidate.id, acquired);
+			return acquired;
 		}
 
 		let response: Response;
@@ -61,52 +85,22 @@ export class MediaAcquirer {
 
 		const blob = await response.blob();
 		const file = new File([blob], fileNameFor({ candidate }), {
-			type:
-				blob.type || (candidate.kind === "video" ? "video/mp4" : "image/jpeg"),
+			type: blob.type || "image/jpeg",
 			lastModified: Date.now(),
 		});
 
 		const url = URL.createObjectURL(file);
-		let thumbnailUrl: string | undefined;
-		let width = candidate.width;
-		let height = candidate.height;
-		let duration = candidate.durationSec;
-		let fps: number | undefined;
-		let hasAudio: boolean | undefined;
-
-		if (candidate.kind === "video") {
-			// Match the regular import path: probe the file for a real poster
-			// frame and playback metadata so the preview/timeline can render it.
-			try {
-				const videoData = await readVideoFile({ file });
-				thumbnailUrl = videoData.thumbnailUrl ?? undefined;
-				width = videoData.width || width;
-				height = videoData.height || height;
-				duration = videoData.duration || duration;
-				fps = Number.isFinite(videoData.fps)
-					? Math.round(videoData.fps)
-					: undefined;
-				hasAudio = videoData.hasAudio;
-			} catch {
-				// Keep API-provided metadata; the asset still plays via url.
-			}
-		} else {
-			thumbnailUrl = url;
-		}
 
 		const asset = await editor.media.addMediaAsset({
 			projectId: editor.project.getActive().metadata.id,
 			asset: {
 				name: `${candidate.provider} · ${fileNameFor({ candidate })}`,
-				type: candidate.kind === "video" ? "video" : "image",
+				type: "image",
 				file,
 				url,
-				thumbnailUrl,
-				width,
-				height,
-				duration,
-				fps,
-				hasAudio,
+				thumbnailUrl: url,
+				width: candidate.width,
+				height: candidate.height,
 			},
 		});
 		if (!asset) {

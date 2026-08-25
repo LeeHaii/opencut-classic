@@ -1,13 +1,13 @@
 import type { ParamDefinition } from "@/params";
 import type { GraphicDefinition, GraphicRenderContext } from "@/graphics";
-import { entranceProgress, exitFactor, easeOutBack, clamp01, easeOutCubic } from "../animation";
 import {
-	accent,
-	setFont,
-	textParam,
-	withAlpha,
-	TEXT_PRIMARY,
-} from "../canvas";
+	entranceProgress,
+	exitFactor,
+	easeOutBack,
+	clamp01,
+	easeOutCubic,
+} from "../animation";
+import { accent, setFont, textParam, withAlpha, TEXT_PRIMARY } from "../canvas";
 import type { MotionTemplate } from "../library-types";
 
 const SOURCE_WIDTH = 1600;
@@ -25,7 +25,14 @@ const CHAPTER_PARAMS: ParamDefinition<keyof ChapterCardParams & string>[] = [
 	{ key: "accentColor", label: "Accent", type: "color", default: "#818cf8" },
 ];
 
-function renderChapterCard({ ctx, params, width, height, localTime = 0, durationSec = 4 }: GraphicRenderContext): void {
+function renderChapterCard({
+	ctx,
+	params,
+	width,
+	height,
+	localTime = 0,
+	durationSec = 4,
+}: GraphicRenderContext): void {
 	ctx.clearRect(0, 0, width, height);
 	const numeralEnter = easeOutCubic({ t: localTime / 0.6 });
 	const pop = easeOutBack({ t: (localTime - 0.15) / 0.6 });
@@ -41,7 +48,11 @@ function renderChapterCard({ ctx, params, width, height, localTime = 0, duration
 	const scale = clamp01({ value: pop });
 	setFont({ ctx, size: height * 0.5 * (0.85 + 0.15 * scale), weight: 800 });
 	ctx.fillStyle = withAlpha({ hex: color, alpha: 0.9 });
-	ctx.fillText(textParam({ params, key: "number", fallback: "1" }), width * 0.12, height * 0.62);
+	ctx.fillText(
+		textParam({ params, key: "number", fallback: "1" }),
+		width * 0.12,
+		height * 0.62,
+	);
 
 	if (titleEnter > 0) {
 		setFont({ ctx, size: height * 0.09, weight: 800 });

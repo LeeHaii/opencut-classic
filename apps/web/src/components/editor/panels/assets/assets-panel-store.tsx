@@ -8,6 +8,7 @@ import {
 	Happy01Icon,
 	HeadphonesIcon,
 	HtmlFiveIcon,
+	Layers01Icon,
 	MagicWand05Icon,
 	TextIcon,
 	Settings01Icon,
@@ -29,6 +30,7 @@ export const TAB_KEYS = [
 	"ai",
 	"motion",
 	"hyperframes",
+	"studio",
 	"settings",
 ] as const;
 
@@ -86,6 +88,10 @@ export const tabs = {
 	hyperframes: {
 		icon: createHugeiconsIcon({ icon: HtmlFiveIcon }),
 		label: "AI Motion (HyperFrames)",
+	},
+	studio: {
+		icon: createHugeiconsIcon({ icon: Layers01Icon }),
+		label: "Scene Studio",
 	},
 	settings: {
 		icon: createHugeiconsIcon({ icon: Settings01Icon }),

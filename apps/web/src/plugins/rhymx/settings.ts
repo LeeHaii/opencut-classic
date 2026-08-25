@@ -17,7 +17,11 @@ export function loadApiKeys(): RhymxApiKeys {
 			const value = isRecord(parsed) ? parsed[key] : undefined;
 			return typeof value === "string" ? value : "";
 		};
-		return { groq: read("groq"), pexels: read("pexels"), pixabay: read("pixabay") };
+		return {
+			groq: read("groq"),
+			pexels: read("pexels"),
+			pixabay: read("pixabay"),
+		};
 	} catch {
 		return { groq: "", pexels: "", pixabay: "" };
 	}
@@ -47,10 +51,9 @@ export async function testProviderKey({
 }): Promise<boolean> {
 	try {
 		if (key === "groq") {
-			const response = await fetch(
-				"https://api.groq.com/openai/v1/models",
-				{ headers: { Authorization: `Bearer ${value}` } },
-			);
+			const response = await fetch("https://api.groq.com/openai/v1/models", {
+				headers: { Authorization: `Bearer ${value}` },
+			});
 			return response.ok;
 		}
 		if (key === "pexels") {
