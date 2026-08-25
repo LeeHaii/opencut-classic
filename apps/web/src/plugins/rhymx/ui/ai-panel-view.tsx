@@ -32,7 +32,7 @@ import {
 	segmentWords,
 } from "../scenes/segmentation";
 import { applyPlan, findSceneCandidates } from "../orchestrator";
-import { listRhymxTemplates, suggestTemplateForScene } from "../motion/library";
+import { suggestTemplateForScene } from "../motion/library";
 import { useRhymxStore } from "../state/rhymx-store";
 
 const MOTION_CONCURRENCY = 2;
@@ -753,32 +753,10 @@ function SceneCard({
 			</p>
 
 			{scene.treatment === "motion" && (
-				<>
-					<Select
-						value={scene.templateId ?? ""}
-						onValueChange={(value) =>
-							store.updateScene({
-								sceneId: scene.id,
-								patch: { templateId: value },
-							})
-						}
-					>
-						<SelectTrigger className="h-7 text-[11px]">
-							<SelectValue placeholder="Fallback template" />
-						</SelectTrigger>
-						<SelectContent>
-							{listRhymxTemplates().map((meta) => (
-								<SelectItem key={meta.id} value={meta.id}>
-									{meta.name}
-								</SelectItem>
-							))}
-						</SelectContent>
-					</Select>
-					<MotionGenerationRow
-						scene={scene}
-						onGenerate={() => void onGenerateMotion({ sceneIds: [scene.id] })}
-					/>
-				</>
+				<MotionGenerationRow
+					scene={scene}
+					onGenerate={() => void onGenerateMotion({ sceneIds: [scene.id] })}
+				/>
 			)}
 
 			{scene.treatment === "media" && scene.candidates.length > 0 && (
