@@ -57,7 +57,7 @@ async function fetchJson({
 
 const pexelsVideos: ProviderSearch = async ({ query, page, context }) => {
 	const data = await fetchJson({
-		url: `https://api.pexels.com/videos/search?query=${encodeURIComponent(query)}&per_page=8&page=${page}&orientation=landscape`,
+		url: `https://api.pexels.com/v1/videos/search?query=${encodeURIComponent(query)}&per_page=8&page=${page}&orientation=landscape`,
 		init: { headers: { Authorization: context.pexelsKey } },
 		fallbackError: "Pexels error",
 		signal: context.signal,
@@ -169,14 +169,24 @@ const pixabayVideos: ProviderSearch = async ({ query, page, context }) => {
 		if (!videos) {
 			return [];
 		}
-		const variant = isRecord(videos.large)
-			? videos.large
-			: isRecord(videos.medium)
-				? videos.medium
-				: isRecord(videos.small)
-					? videos.small
-					: null;
-		const sourceUrl = variant ? optionalString(variant.url) : undefined;
+		const getVariant = ({ name }: { name: string }) => {
+			const value = videos[name];
+			return isRecord(value) && optionalString(value.url) ? value : null;
+		};
+		// Pixabay's large rendition is commonly 4K. Keep project downloads to
+		// the medium rendition while using tiny for a lightweight preview.
+		const sourceVariant =
+			getVariant({ name: "medium" }) ??
+			getVariant({ name: "small" }) ??
+			getVariant({ name: "large" }) ??
+			getVariant({ name: "tiny" });
+		const previewVariant =
+			getVariant({ name: "tiny" }) ??
+			getVariant({ name: "small" }) ??
+			sourceVariant;
+		const sourceUrl = sourceVariant
+			? optionalString(sourceVariant.url)
+			: undefined;
 		if (!sourceUrl) {
 			return [];
 		}
@@ -185,8 +195,15 @@ const pixabayVideos: ProviderSearch = async ({ query, page, context }) => {
 			provider: "pixabay",
 			kind: "video",
 			sourceUrl,
-			width: optionalNumber(hit.width),
-			height: optionalNumber(hit.height),
+			previewUrl: previewVariant
+				? optionalString(previewVariant.url)
+				: undefined,
+			thumbnailUrl:
+				(previewVariant
+					? optionalString(previewVariant.thumbnail)
+					: undefined) ?? optionalString(sourceVariant?.thumbnail),
+			width: optionalNumber(sourceVariant?.width),
+			height: optionalNumber(sourceVariant?.height),
 			durationSec: optionalNumber(hit.duration),
 			creator: optionalString(hit.user),
 			landingUrl: optionalString(hit.pageURL),

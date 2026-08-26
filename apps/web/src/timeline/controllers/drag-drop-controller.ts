@@ -126,7 +126,9 @@ function getDurationForDrag({
 }): MediaTime {
 	if (dragData.type !== "media") return DEFAULT_NEW_ELEMENT_DURATION;
 	const media = mediaAssets.find((asset) => asset.id === dragData.id);
-	return toElementDurationTicks({ seconds: media?.duration });
+	return toElementDurationTicks({
+		seconds: media?.duration ?? dragData.duration,
+	});
 }
 
 function orderedTracks({
@@ -262,7 +264,29 @@ export class DragDropController {
 		try {
 			if (dragData) {
 				if (!currentTarget) return;
-				this.executeAssetDrop({ target: currentTarget, dragData });
+				const resolvedDragData = this.config.dragSource.resolveForDrop();
+				if (!resolvedDragData) return;
+				if (resolvedDragData instanceof Promise) {
+					void resolvedDragData
+						.then((resolved) => {
+							this.executeAssetDrop({
+								target: currentTarget,
+								dragData: resolved,
+							});
+						})
+						.catch((error) => {
+							console.error("Failed to prepare dropped asset:", error);
+							toast.error("Couldn't add media", {
+								description:
+									error instanceof Error ? error.message : "Download failed",
+							});
+						});
+					return;
+				}
+				this.executeAssetDrop({
+					target: currentTarget,
+					dragData: resolvedDragData,
+				});
 				return;
 			}
 

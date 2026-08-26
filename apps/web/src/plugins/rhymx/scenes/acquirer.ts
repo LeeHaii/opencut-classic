@@ -14,16 +14,10 @@ function fileNameFor({ candidate }: { candidate: StockCandidate }): string {
 	return `rhymx-${label}.${extension}`;
 }
 
-/**
- * Registers a stock candidate for timeline use.
- *
- * Videos are registered as remote streaming assets: zero disk usage, frames
- * decode on demand over HTTP range requests via mediabunny's UrlSource.
- * Images are small and need CORS-safe canvas access, so they are still
- * downloaded. Deduplicated by candidate id via the returned cache.
- */
+/** Downloads a stock candidate into the project media library on demand. */
 export class MediaAcquirer {
 	private acquired = new Map<string, AcquiredMedia>();
+	private acquiring = new Map<string, Promise<AcquiredMedia>>();
 
 	getCached({ candidateId }: { candidateId: string }): AcquiredMedia | null {
 		return this.acquired.get(candidateId) ?? null;
@@ -42,28 +36,29 @@ export class MediaAcquirer {
 		if (cached) {
 			return cached;
 		}
-
-		if (candidate.kind === "video") {
-			const asset = await editor.media.addMediaAsset({
-				projectId: editor.project.getActive().metadata.id,
-				asset: {
-					name: `${candidate.provider} · ${fileNameFor({ candidate })}`,
-					type: "video",
-					remoteUrl: candidate.sourceUrl,
-					thumbnailUrl: candidate.thumbnailUrl,
-					width: candidate.width,
-					height: candidate.height,
-					duration: candidate.durationSec,
-				},
-			});
-			if (!asset) {
-				throw new Error("Could not register the streaming clip");
-			}
-			const acquired: AcquiredMedia = { mediaId: asset.id, candidate };
-			this.acquired.set(candidate.id, acquired);
-			return acquired;
+		const pending = this.acquiring.get(candidate.id);
+		if (pending) {
+			return pending;
 		}
 
+		const acquisition = this.download({ editor, candidate, signal });
+		this.acquiring.set(candidate.id, acquisition);
+		try {
+			return await acquisition;
+		} finally {
+			this.acquiring.delete(candidate.id);
+		}
+	}
+
+	private async download({
+		editor,
+		candidate,
+		signal,
+	}: {
+		editor: EditorCore;
+		candidate: StockCandidate;
+		signal?: AbortSignal;
+	}): Promise<AcquiredMedia> {
 		let response: Response;
 		try {
 			response = await fetch(candidate.sourceUrl, { signal });
@@ -84,8 +79,12 @@ export class MediaAcquirer {
 		}
 
 		const blob = await response.blob();
+		if (blob.size > MAX_DOWNLOAD_BYTES) {
+			throw new Error("File exceeds the 500 MB download limit");
+		}
 		const file = new File([blob], fileNameFor({ candidate }), {
-			type: blob.type || "image/jpeg",
+			type:
+				blob.type || (candidate.kind === "video" ? "video/mp4" : "image/jpeg"),
 			lastModified: Date.now(),
 		});
 
@@ -95,12 +94,15 @@ export class MediaAcquirer {
 			projectId: editor.project.getActive().metadata.id,
 			asset: {
 				name: `${candidate.provider} · ${fileNameFor({ candidate })}`,
-				type: "image",
+				type: candidate.kind,
 				file,
 				url,
-				thumbnailUrl: url,
+				thumbnailUrl:
+					candidate.thumbnailUrl ??
+					(candidate.kind === "image" ? url : undefined),
 				width: candidate.width,
 				height: candidate.height,
+				duration: candidate.durationSec,
 			},
 		});
 		if (!asset) {

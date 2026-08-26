@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import { X } from "lucide-react";
 import type { PreviewOverlaySourceResult } from "@/preview/overlays";
 import { Button } from "@/components/ui/button";
@@ -28,7 +29,9 @@ export function getStockPreviewOverlaySource({
 				plane: "over-interaction",
 				pointerEvents: "auto",
 				zIndex: 60,
-				render: () => <StockPreviewOverlay candidate={candidate} />,
+				render: () => (
+					<StockPreviewOverlay key={candidate.id} candidate={candidate} />
+				),
 			},
 		],
 	};
@@ -38,11 +41,26 @@ function StockPreviewOverlay({ candidate }: { candidate: StockCandidate }) {
 	const setPreviewCandidate = useRhymxStore(
 		(state) => state.setPreviewCandidate,
 	);
-	const src = candidate.previewUrl ?? candidate.sourceUrl;
+	const preferredSrc = candidate.previewUrl ?? candidate.sourceUrl;
+	const [src, setSrc] = useState(preferredSrc);
+	const [failed, setFailed] = useState(false);
+
+	const handlePreviewError = () => {
+		if (src !== candidate.sourceUrl) {
+			setSrc(candidate.sourceUrl);
+			return;
+		}
+		setFailed(true);
+	};
 
 	return (
 		<div className="relative size-full overflow-hidden bg-black">
-			{candidate.kind === "video" ? (
+			{failed ? (
+				<div className="flex size-full items-center justify-center px-6 text-center text-sm text-white/70">
+					This provider could not stream the preview. You can still add the clip
+					to the timeline.
+				</div>
+			) : candidate.kind === "video" ? (
 				// eslint-disable-next-line jsx-a11y/media-has-caption -- stock preview clip, no captions available
 				<video
 					key={src}
@@ -53,13 +71,17 @@ function StockPreviewOverlay({ candidate }: { candidate: StockCandidate }) {
 					controls
 					playsInline
 					preload="metadata"
+					poster={candidate.thumbnailUrl}
+					onError={handlePreviewError}
 				/>
 			) : (
+				// eslint-disable-next-line @next/next/no-img-element
 				<img
 					src={src}
 					alt={candidate.id}
 					className="size-full object-contain"
 					referrerPolicy="no-referrer"
+					onError={handlePreviewError}
 				/>
 			)}
 			<div className="pointer-events-none absolute left-1/2 top-2 flex -translate-x-1/2 items-center gap-1.5">

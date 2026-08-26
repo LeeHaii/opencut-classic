@@ -2,6 +2,14 @@ import type { TimelineDragData } from "@/timeline/drag";
 
 const TIMELINE_DRAG_MIME = "application/x-timeline-drag";
 
+export type TimelineDragDataResolver = () => Promise<TimelineDragData>;
+type TimelineDataTransfer = Pick<DataTransfer, "effectAllowed" | "setData">;
+
+interface ActiveTimelineDrag {
+	dragData: TimelineDragData;
+	resolveDragData?: TimelineDragDataResolver;
+}
+
 /**
  * Owns the state of an in-progress timeline drag session.
  *
@@ -12,18 +20,20 @@ const TIMELINE_DRAG_MIME = "application/x-timeline-drag";
  * keep a live copy here and hand it out via {@link getActive}.
  */
 export class TimelineDragSource {
-	private active: TimelineDragData | null = null;
+	private active: ActiveTimelineDrag | null = null;
 
 	begin({
 		dataTransfer,
 		dragData,
+		resolveDragData,
 	}: {
-		dataTransfer: DataTransfer;
+		dataTransfer: TimelineDataTransfer;
 		dragData: TimelineDragData;
+		resolveDragData?: TimelineDragDataResolver;
 	}): void {
 		dataTransfer.setData(TIMELINE_DRAG_MIME, JSON.stringify(dragData));
 		dataTransfer.effectAllowed = "copy";
-		this.active = dragData;
+		this.active = { dragData, resolveDragData };
 	}
 
 	end(): void {
@@ -31,7 +41,12 @@ export class TimelineDragSource {
 	}
 
 	getActive(): TimelineDragData | null {
-		return this.active;
+		return this.active?.dragData ?? null;
+	}
+
+	resolveForDrop(): TimelineDragData | Promise<TimelineDragData> | null {
+		if (!this.active) return null;
+		return this.active.resolveDragData?.() ?? this.active.dragData;
 	}
 
 	isActive(): boolean {

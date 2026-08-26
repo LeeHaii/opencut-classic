@@ -15,11 +15,13 @@ import {
 	SlidersHorizontalIcon,
 	AiMagicIcon,
 	SparklesIcon,
+	Video01Icon,
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon, type IconSvgElement } from "@hugeicons/react";
 
 export const TAB_KEYS = [
 	"media",
+	"stock",
 	"sounds",
 	"text",
 	"stickers",
@@ -48,6 +50,10 @@ export const tabs = {
 	media: {
 		icon: createHugeiconsIcon({ icon: Folder03Icon }),
 		label: "Media",
+	},
+	stock: {
+		icon: createHugeiconsIcon({ icon: Video01Icon }),
+		label: "Stock videos",
 	},
 	sounds: {
 		icon: createHugeiconsIcon({ icon: HeadphonesIcon }),
