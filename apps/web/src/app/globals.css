@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@source "../../node_modules/@hyperframes/studio/dist/index.js";
 
 /* Custom variant for dark mode */
 @custom-variant dark (&:where(.dark, .dark *));
@@ -153,6 +154,8 @@
   --font-sans: var(--font-inter), sans-serif;
 
   /* Font sizes */
+  --text-2xs: 0.625rem;
+  --text-2xs--line-height: 0.875rem;
   --text-xs: 0.72rem;
   --text-sm: 0.79rem;
   --text-base: 0.92rem;
@@ -176,6 +179,30 @@
   --color-popover-foreground: var(--popover-foreground);
 
   --color-primary: var(--primary);
+  --color-studio-accent: var(--primary);
+  --color-studio-surface: var(--card);
+  --color-panel-accent: var(--primary);
+  --color-panel-bg: var(--background);
+  --color-panel-bg-2: var(--card);
+  --color-panel-bg-3: var(--accent);
+  --color-panel-bg-inset: var(--input);
+  --color-panel-bg-soft: var(--accent);
+  --color-panel-border: var(--border);
+  --color-panel-border-input: var(--input);
+  --color-panel-container: var(--caution);
+  --color-panel-danger: var(--destructive);
+  --color-panel-hairline: var(--border);
+  --color-panel-hover: var(--accent);
+  --color-panel-input: var(--input);
+  --color-panel-media: var(--primary);
+  --color-panel-surface: var(--card);
+  --color-panel-surface-hover: var(--accent);
+  --color-panel-text-0: var(--foreground);
+  --color-panel-text-1: var(--foreground);
+  --color-panel-text-2: var(--muted-foreground);
+  --color-panel-text-3: var(--muted-foreground);
+  --color-panel-text-4: var(--muted-foreground);
+  --color-panel-text-5: var(--muted-foreground);
   --color-primary-foreground: var(--primary-foreground);
   --color-secondary: var(--secondary);
   --color-secondary-border: var(--secondary-border);

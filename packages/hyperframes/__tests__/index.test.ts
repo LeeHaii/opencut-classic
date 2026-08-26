@@ -149,6 +149,9 @@ describe("preparePreviewHtml", () => {
 		expect(prepared).toContain(PREVIEW_MESSAGE_SOURCE);
 		expect(prepared).toContain('data.action === "snapshot"');
 		expect(prepared).toContain('post("snapshot"');
+		expect(prepared).toContain('data.action === "select-element"');
+		expect(prepared).toContain('post("element-selected"');
+		expect(prepared).toContain("data-opencut-studio-selection");
 		expect(prepared).toContain("</body>");
 	});
 

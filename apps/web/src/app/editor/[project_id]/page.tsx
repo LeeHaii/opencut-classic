@@ -1,5 +1,6 @@
 "use client";
 
+import dynamic from "next/dynamic";
 import { useParams } from "next/navigation";
 import {
 	ResizablePanelGroup,
@@ -47,6 +48,22 @@ const EMPTY_OVERLAY_SOURCE: PreviewOverlaySourceResult = {
 	definitions: [],
 	instances: [],
 };
+
+const SceneStudioTimeline = dynamic(
+	async () => {
+		const studio =
+			await import("@/hyperframes/components/scene-studio-timeline");
+		return studio.SceneStudioTimeline;
+	},
+	{
+		ssr: false,
+		loading: () => (
+			<div className="panel bg-background text-muted-foreground flex h-full items-center justify-center rounded-sm border text-xs">
+				Loading scene timeline…
+			</div>
+		),
+	},
+);
 
 export default function Editor() {
 	const params = useParams();
@@ -97,6 +114,9 @@ function DegradedRendererBanner() {
 function EditorLayout() {
 	usePasteMedia();
 	const { panels, setPanel } = usePanelStore();
+	const studioElementId = useHyperframesStudioStore(
+		(state) => state.activeElementId,
+	);
 	const activeScene = useEditor((editor) =>
 		editor.scenes.getActiveSceneOrNull(),
 	);
@@ -180,7 +200,7 @@ function EditorLayout() {
 				maxSize={70}
 				className="min-h-0 px-3 pb-3"
 			>
-				<Timeline />
+				{studioElementId ? <SceneStudioTimeline /> : <Timeline />}
 			</ResizablePanel>
 		</ResizablePanelGroup>
 	);

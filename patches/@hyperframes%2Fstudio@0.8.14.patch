@@ -1,0 +1,41 @@
+diff --git a/dist/index.js b/dist/index.js
+--- a/dist/index.js
++++ b/dist/index.js
+@@ -1531,7 +1531,7 @@ function resolveTimelineDuration(duration) {
+ }
+ 
+ // src/player/lib/thumbnailPolicy.ts
+-var rawPolicy = import.meta.env.VITE_STUDIO_TIMELINE_THUMBNAIL_POLICY;
++var rawPolicy = import.meta.env?.VITE_STUDIO_TIMELINE_THUMBNAIL_POLICY;
+ var studioThumbnailRuntimePolicy = rawPolicy === "force-hidden" || rawPolicy === "legacy-default" ? rawPolicy : "follow-preference";
+ function defaultThumbnailMode(storedMode, policy = studioThumbnailRuntimePolicy) {
+   return storedMode ?? (policy === "legacy-default" ? "hidden" : "adaptive");
+@@ -21661,6 +21661,6 @@
+ 
+ // src/player/components/timelineRowVirtualizationFlag.ts
+-var STUDIO_TIMELINE_ROW_VIRTUALIZATION_ENABLED = import.meta.env.VITE_STUDIO_TIMELINE_ROW_VIRTUALIZATION_ENABLED !== "0";
++var STUDIO_TIMELINE_ROW_VIRTUALIZATION_ENABLED = import.meta.env?.VITE_STUDIO_TIMELINE_ROW_VIRTUALIZATION_ENABLED !== "0";
+ 
+ // src/player/components/useTimelineScrollViewport.ts
+ var EMPTY_VIEWPORT = Object.freeze({
+diff --git a/src/player/components/timelineRowVirtualizationFlag.ts b/src/player/components/timelineRowVirtualizationFlag.ts
+--- a/src/player/components/timelineRowVirtualizationFlag.ts
++++ b/src/player/components/timelineRowVirtualizationFlag.ts
+@@ -7,4 +7,4 @@
+  * type back, which would close an import cycle.
+  */
+ export const STUDIO_TIMELINE_ROW_VIRTUALIZATION_ENABLED =
+-  import.meta.env.VITE_STUDIO_TIMELINE_ROW_VIRTUALIZATION_ENABLED !== "0";
++  import.meta.env?.VITE_STUDIO_TIMELINE_ROW_VIRTUALIZATION_ENABLED !== "0";
+diff --git a/src/player/lib/thumbnailPolicy.ts b/src/player/lib/thumbnailPolicy.ts
+--- a/src/player/lib/thumbnailPolicy.ts
++++ b/src/player/lib/thumbnailPolicy.ts
+@@ -4,7 +4,7 @@ export type ThumbnailRuntimePolicy = "follow-preference" | "force-hidden" | "le
+ // "Adaptive" currently means the scheduler pauses rich work while scrolling.
+ // The mode name leaves room for finer-grained runtime heuristics later.
+ 
+-const rawPolicy = import.meta.env.VITE_STUDIO_TIMELINE_THUMBNAIL_POLICY;
++const rawPolicy = import.meta.env?.VITE_STUDIO_TIMELINE_THUMBNAIL_POLICY;
+ 
+ const studioThumbnailRuntimePolicy: ThumbnailRuntimePolicy =
+   rawPolicy === "force-hidden" || rawPolicy === "legacy-default" ? rawPolicy : "follow-preference";
