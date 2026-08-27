@@ -6,6 +6,7 @@ import type {
 	CreateUploadAudioElement,
 	TimelineElement,
 	AudioElement,
+	HyperframesElement,
 	VideoElement,
 } from "../types";
 
@@ -58,11 +59,14 @@ export function doesElementHaveEnabledAudio({
 	element,
 	mediaAsset,
 }: {
-	element: AudioElement | VideoElement;
+	element: AudioElement | VideoElement | HyperframesElement;
 	mediaAsset?: MediaAudioState | null;
 }): boolean {
 	if (element.type === "audio") {
 		return true;
+	}
+	if (element.type === "hyperframes") {
+		return !!mediaAsset && mediaAsset.hasAudio !== false;
 	}
 
 	return (

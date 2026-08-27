@@ -1,6 +1,8 @@
 "use client";
 
 import { createContext, useContext } from "react";
+import { Replace } from "lucide-react";
+import { Spinner } from "@/components/ui/spinner";
 import { useEditor } from "@/editor/use-editor";
 import { useAssetsPanelStore } from "@/components/editor/panels/assets/assets-panel-store";
 import { AudioWaveform, WAVEFORM_GAIN_SAMPLE_COUNT } from "./audio-waveform";
@@ -39,6 +41,7 @@ import type {
 	VideoElement,
 	ImageElement,
 	AudioElement,
+	HyperframesElement,
 } from "@/timeline";
 import type { MediaAsset } from "@/media/types";
 import { mediaSupportsAudio } from "@/media/media-utils";
@@ -47,7 +50,10 @@ import {
 	getSourceAudioActionLabel,
 	isSourceAudioSeparated,
 } from "@/timeline/audio-separation";
-import { buildWaveformGainSamples, isElementMuted } from "@/timeline/audio-state";
+import {
+	buildWaveformGainSamples,
+	isElementMuted,
+} from "@/timeline/audio-state";
 import { getTimelinePixelsPerSecond } from "@/timeline";
 import { buildWaveformSourceKey } from "@/media/waveform-summary";
 import { addMediaTime, type MediaTime, TICKS_PER_SECOND } from "@/wasm";
@@ -74,6 +80,8 @@ import {
 	Exchange01Icon,
 	KeyframeIcon,
 	MagicWand05Icon,
+	HtmlFiveIcon,
+	Layers01Icon,
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { uppercase } from "@/utils/string";
@@ -83,6 +91,7 @@ import { cn } from "@/utils/ui";
 import { usePropertiesStore } from "@/components/editor/panels/properties/stores/properties-store";
 import { getTrackTypeForElementType } from "@/timeline/placement/compatibility";
 import { useTimelineStore } from "@/timeline/timeline-store";
+import { useHyperframesStudioStore } from "@/hyperframes/studio-store";
 import { KEYFRAME_LANE_HEIGHT_PX } from "./layout";
 import {
 	getExpandedRows,
@@ -306,6 +315,7 @@ export function TimelineElement({
 	const toggleElementExpanded = useTimelineStore(
 		(s) => s.toggleElementExpanded,
 	);
+	const editor = useEditor();
 	const expandedRows = useMemo(
 		() =>
 			isExpanded ? getExpandedRows({ animations: element.animations }) : [],
@@ -498,6 +508,21 @@ export function TimelineElement({
 							</ContextMenuItem>
 						</>
 					)}
+					{element.type === "hyperframes" && (
+						<ContextMenuItem
+							icon={<HugeiconsIcon icon={Layers01Icon} />}
+							onClick={(event: React.MouseEvent) => {
+								event.stopPropagation();
+								useHyperframesStudioStore
+									.getState()
+									.enter({ elementId: element.id });
+								useAssetsPanelStore.getState().setActiveTab("studio");
+								editor.playback.seek({ time: element.startTime });
+							}}
+						>
+							Edit in Studio
+						</ContextMenuItem>
+					)}
 					<ContextMenuSeparator />
 					<DeleteMenuItem
 						isMultipleSelected={selectedElements.length > 1}
@@ -549,8 +574,7 @@ function ElementInner({
 }) {
 	const visibleElement = displayElement ?? element;
 	const isReducedOpacity =
-		(canElementBeHidden(visibleElement) && visibleElement.hidden) ||
-		isDropTarget;
+		canElementBeHidden(visibleElement) && visibleElement.hidden;
 	return (
 		<div
 			className="absolute top-0 bottom-0"
@@ -562,13 +586,23 @@ function ElementInner({
 			<div
 				className="absolute inset-0 rounded-sm"
 				style={
-					isSelected
+					isDropTarget
 						? {
-								boxShadow: `0 0 0 ${ELEMENT_RING_WIDTH_PX}px var(--primary)`,
+								boxShadow: `0 0 0 ${ELEMENT_RING_WIDTH_PX}px #10b981`,
 							}
-						: undefined
+						: isSelected
+							? {
+									boxShadow: `0 0 0 ${ELEMENT_RING_WIDTH_PX}px var(--primary)`,
+								}
+							: undefined
 				}
 			>
+				{isDropTarget && (
+					<span className="bg-emerald-600 text-white pointer-events-none absolute left-1/2 top-1 z-10 flex -translate-x-1/2 items-center gap-0.5 rounded px-1.5 py-0.5 text-[9px] font-medium leading-none">
+						<Replace className="size-2.5" />
+						Replace
+					</span>
+				)}
 				<div
 					className={cn(
 						"absolute inset-0 overflow-hidden rounded-sm",
@@ -909,7 +943,9 @@ function TextElementContent({
 	return (
 		<div className="flex size-full items-center justify-start pl-2">
 			<span className="truncate text-xs text-white">
-				{typeof element.params.content === "string" ? element.params.content : ""}
+				{typeof element.params.content === "string"
+					? element.params.content
+					: ""}
 			</span>
 		</div>
 	);
@@ -1095,6 +1131,8 @@ function TiledMediaContent({
 		element.type === "video"
 			? mediaAsset?.thumbnailUrl
 			: (mediaAsset?.thumbnailUrl ?? mediaAsset?.url);
+	const isPendingDownload = mediaAsset?.downloadStatus === "pending";
+	const didDownloadFail = mediaAsset?.downloadStatus === "failed";
 
 	if (!imageUrl) {
 		return (
@@ -1117,6 +1155,7 @@ function TiledMediaContent({
 					backgroundRepeat: "repeat-x",
 					backgroundSize: `${tileWidth}px ${trackHeight}px`,
 					backgroundPosition: "left center",
+					filter: isPendingDownload ? "brightness(0.55)" : undefined,
 					pointerEvents: "none",
 				}}
 			/>
@@ -1129,6 +1168,16 @@ function TiledMediaContent({
 				}
 				hasFade={true}
 			/>
+			{isPendingDownload && (
+				<div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center bg-black/15">
+					<Spinner className="size-5 text-white drop-shadow" />
+				</div>
+			)}
+			{didDownloadFail && (
+				<div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center bg-black/55 px-2 text-center text-[10px] font-medium text-white">
+					Download failed
+				</div>
+			)}
 		</>
 	);
 }
@@ -1178,7 +1227,47 @@ function ElementContent({ element, track }: ElementContentProps) {
 		case "video":
 		case "image":
 			return <TiledMediaContent element={element} track={track} />;
+		case "hyperframes":
+			return <HyperframesElementContent element={element} />;
 	}
+}
+
+function HyperframesElementContent({
+	element,
+}: {
+	element: HyperframesElement;
+}) {
+	const isRendered = Boolean(element.renderedMediaId);
+	return (
+		<div
+			className="absolute inset-0 flex items-end"
+			style={{
+				background:
+					"linear-gradient(105deg, #1b1b2b 0%, #26264a 55%, #3b2d5e 100%)",
+				pointerEvents: "none",
+			}}
+		>
+			<div className="absolute top-0 left-0 flex h-5 w-full items-center gap-1 bg-linear-to-b from-black/40 to-transparent pt-1 pl-1.5">
+				<HugeiconsIcon
+					icon={HtmlFiveIcon}
+					size={12}
+					className="text-white/80"
+				/>
+				<span className="truncate text-[0.6rem] leading-tight text-white/75">
+					{element.name}
+				</span>
+			</div>
+			<span
+				className={`mb-1 ml-1.5 rounded-sm px-1 py-px text-[9px] font-medium ${
+					isRendered
+						? "bg-emerald-500/20 text-emerald-300"
+						: "bg-amber-500/20 text-amber-300"
+				}`}
+			>
+				{isRendered ? "rendered" : "unrendered"}
+			</span>
+		</div>
+	);
 }
 
 function CopyMenuItem() {

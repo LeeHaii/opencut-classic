@@ -9,7 +9,7 @@ import { effectsRegistry, resolveEffectPasses } from "@/effects";
 import type { Effect, EffectPass } from "@/effects/types";
 import { getSourceTimeAtClipTime } from "@/retime";
 import {
-	DEFAULT_GRAPHIC_SOURCE_SIZE,
+	getGraphicSourceSize,
 	resolveGraphicElementParamsAtTime,
 } from "@/graphics";
 import {
@@ -35,6 +35,12 @@ import {
 	GraphicNode,
 	type ResolvedGraphicNodeState,
 } from "./nodes/graphic-node";
+import {
+	HyperframesNode,
+	loadHyperframesPoster,
+} from "./nodes/hyperframes-node";
+import { renderHyperframesBrowserFrame } from "@/hyperframes/browser-frame-renderer";
+import { TICKS_PER_SECOND } from "@/wasm";
 import { ImageNode, loadImageSource } from "./nodes/image-node";
 import { StickerNode, loadStickerSource } from "./nodes/sticker-node";
 import { TextNode, type ResolvedTextNodeState } from "./nodes/text-node";
@@ -83,6 +89,8 @@ async function resolveNode({
 		node.resolved = await resolveStickerNode({ node, context });
 	} else if (node instanceof GraphicNode) {
 		node.resolved = resolveGraphicNode({ node, context });
+	} else if (node instanceof HyperframesNode) {
+		node.resolved = await resolveHyperframesNode({ node, context });
 	} else if (node instanceof TextNode) {
 		node.resolved = resolveTextNode({ node, context });
 	} else if (node instanceof BlurBackgroundNode) {
@@ -205,7 +213,10 @@ async function resolveVideoNode({
 	const frame = await videoCache.getFrameAt({
 		mediaId: node.params.mediaId,
 		file: node.params.file,
-		time: mediaTimeToSeconds({ time: roundMediaTime({ time: sourceTimeTicks }) }),
+		remoteUrl: node.params.remoteUrl,
+		time: mediaTimeToSeconds({
+			time: roundMediaTime({ time: sourceTimeTicks }),
+		}),
 	});
 	if (!frame) {
 		return null;
@@ -286,6 +297,39 @@ async function resolveStickerNode({
 	};
 }
 
+async function resolveHyperframesNode({
+	node,
+	context,
+}: {
+	node: HyperframesNode;
+	context: ResolveContext;
+}): Promise<ResolvedVisualSourceNodeState | null> {
+	const poster = await loadHyperframesPoster(node.params);
+	const visualState = resolveVisualState({
+		params: node.params,
+		context,
+		sourceWidth: poster.width,
+		sourceHeight: poster.height,
+	});
+	if (!visualState) {
+		return null;
+	}
+	const source = context.renderer.renderHyperframesDom
+		? await renderHyperframesBrowserFrame({
+				params: node.params,
+				timeSeconds:
+					(visualState.localTime + node.params.trimStart) / TICKS_PER_SECOND,
+			})
+		: poster;
+
+	return {
+		...visualState,
+		source: source.source,
+		sourceWidth: source.width,
+		sourceHeight: source.height,
+	};
+}
+
 function resolveGraphicNode({
 	node,
 	context,
@@ -293,11 +337,14 @@ function resolveGraphicNode({
 	node: GraphicNode;
 	context: ResolveContext;
 }): ResolvedGraphicNodeState | null {
+	const { width: sourceWidth, height: sourceHeight } = getGraphicSourceSize({
+		definitionId: node.params.definitionId,
+	});
 	const visualState = resolveVisualState({
 		params: node.params,
 		context,
-		sourceWidth: DEFAULT_GRAPHIC_SOURCE_SIZE,
-		sourceHeight: DEFAULT_GRAPHIC_SOURCE_SIZE,
+		sourceWidth,
+		sourceHeight,
 	});
 	if (!visualState) {
 		return null;
@@ -426,7 +473,10 @@ async function resolveBackdropSource({
 		const frame = await videoCache.getFrameAt({
 			mediaId: node.params.mediaId,
 			file: node.params.file,
-			time: mediaTimeToSeconds({ time: roundMediaTime({ time: sourceTimeTicks }) }),
+			remoteUrl: node.params.remoteUrl,
+			time: mediaTimeToSeconds({
+				time: roundMediaTime({ time: sourceTimeTicks }),
+			}),
 		});
 		if (!frame) {
 			return null;

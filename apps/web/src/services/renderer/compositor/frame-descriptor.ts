@@ -1,6 +1,7 @@
 import { drawCssBackground } from "@/gradients";
 import { getMaskDefinition } from "@/masks";
 import { incrementCounter } from "@/diagnostics/render-perf";
+import { TICKS_PER_SECOND } from "@/wasm";
 import type { AnyBaseNode } from "../nodes/base-node";
 import type { CanvasRenderer } from "../canvas-renderer";
 import { createCanvasSurface } from "../canvas-utils";
@@ -11,6 +12,7 @@ import {
 	GraphicNode,
 	type ResolvedGraphicNodeState,
 } from "../nodes/graphic-node";
+import { HyperframesNode } from "../nodes/hyperframes-node";
 import { ImageNode } from "../nodes/image-node";
 import { RootNode } from "../nodes/root-node";
 import { StickerNode } from "../nodes/sticker-node";
@@ -25,7 +27,7 @@ import type {
 	TextureCanvasDrawFn,
 	TextureUploadDescriptor,
 } from "./types";
-import { DEFAULT_GRAPHIC_SOURCE_SIZE } from "@/graphics";
+import { getGraphicSourceSize } from "@/graphics";
 
 export async function buildFrameDescriptor({
 	node,
@@ -182,7 +184,8 @@ async function collectNode({
 		node instanceof VideoNode ||
 		node instanceof ImageNode ||
 		node instanceof StickerNode ||
-		node instanceof GraphicNode
+		node instanceof GraphicNode ||
+		node instanceof HyperframesNode
 	) {
 		await collectVisualSourceNode({
 			node,
@@ -212,7 +215,7 @@ async function collectVisualSourceNode({
 	items,
 	textures,
 }: {
-	node: VideoNode | ImageNode | StickerNode | GraphicNode;
+	node: VideoNode | ImageNode | StickerNode | GraphicNode | HyperframesNode;
 	renderer: CanvasRenderer;
 	path: string;
 	items: FrameItemDescriptor[];
@@ -222,22 +225,35 @@ async function collectVisualSourceNode({
 		return;
 	}
 
+	const graphicSize =
+		node instanceof GraphicNode
+			? getGraphicSourceSize({ definitionId: node.params.definitionId })
+			: null;
 	const source =
 		node instanceof GraphicNode
-			? node.getSource({ resolvedParams: node.resolved.resolvedParams })
+			? node.getSource({
+					resolvedParams: node.resolved.resolvedParams,
+					localTimeSec: node.resolved.localTime / TICKS_PER_SECOND,
+				})
 			: node.resolved.source;
 	if (!source) {
 		return;
 	}
 
-	const sourceWidth =
-		node instanceof GraphicNode
-			? DEFAULT_GRAPHIC_SOURCE_SIZE
-			: (node.resolved as ResolvedVisualSourceNodeState).sourceWidth;
-	const sourceHeight =
-		node instanceof GraphicNode
-			? DEFAULT_GRAPHIC_SOURCE_SIZE
-			: (node.resolved as ResolvedVisualSourceNodeState).sourceHeight;
+	let sourceWidth: number;
+	let sourceHeight: number;
+	if (graphicSize) {
+		sourceWidth = graphicSize.width;
+		sourceHeight = graphicSize.height;
+	} else if (
+		"sourceWidth" in node.resolved &&
+		"sourceHeight" in node.resolved
+	) {
+		sourceWidth = node.resolved.sourceWidth;
+		sourceHeight = node.resolved.sourceHeight;
+	} else {
+		return;
+	}
 
 	const textureId = `${path}:source`;
 	textures.set(textureId, {
@@ -376,7 +392,7 @@ function buildMaskArtifacts({
 	transform,
 	textures,
 }: {
-	node: VideoNode | ImageNode | StickerNode | GraphicNode;
+	node: VideoNode | ImageNode | StickerNode | GraphicNode | HyperframesNode;
 	renderer: CanvasRenderer;
 	path: string;
 	transform: QuadTransformDescriptor;

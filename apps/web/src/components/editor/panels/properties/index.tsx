@@ -1,5 +1,6 @@
 "use client";
 
+import dynamic from "next/dynamic";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Button } from "@/components/ui/button";
 import {
@@ -14,13 +15,35 @@ import { usePropertiesStore } from "./stores/properties-store";
 import { getPropertiesConfig } from "./registry";
 import { cn } from "@/utils/ui";
 import { EmptyView } from "./empty-view";
+import { useHyperframesStudioStore } from "@/hyperframes/studio-store";
+
+const SceneStudioInspector = dynamic(
+	async () => {
+		const studio =
+			await import("@/hyperframes/components/scene-studio-inspector");
+		return studio.SceneStudioInspector;
+	},
+	{
+		ssr: false,
+		loading: () => (
+			<div className="panel bg-background text-muted-foreground flex h-full items-center justify-center rounded-sm border text-xs">
+				Loading scene properties…
+			</div>
+		),
+	},
+);
 
 export function PropertiesPanel() {
 	const editor = useEditor();
+	const studioElementId = useHyperframesStudioStore(
+		(state) => state.activeElementId,
+	);
 	useEditor((e) => e.scenes.getActiveSceneOrNull());
 	useEditor((e) => e.media.getAssets());
 	const { selectedElements } = useElementSelection();
 	const { activeTabPerType, setActiveTab } = usePropertiesStore();
+
+	if (studioElementId) return <SceneStudioInspector />;
 
 	if (selectedElements.length === 0) {
 		return (

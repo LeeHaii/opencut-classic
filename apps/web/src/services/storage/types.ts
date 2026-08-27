@@ -27,6 +27,8 @@ export interface MediaAssetData {
 	hasAudio?: boolean;
 	ephemeral?: boolean;
 	thumbnailUrl?: string;
+	/** Remote source URL for streamed (not-yet-downloaded) assets. */
+	remoteUrl?: string;
 }
 
 export type SerializedScene = Omit<TScene, "createdAt" | "updatedAt"> & {

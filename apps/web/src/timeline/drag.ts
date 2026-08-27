@@ -1,4 +1,4 @@
-import type { MaskableElement, VisualElement } from "./types";
+import type { ElementType, VisualElement } from "./types";
 import type { ParamValues } from "@/params";
 
 interface BaseDragData {
@@ -9,7 +9,8 @@ interface BaseDragData {
 export interface MediaDragData extends BaseDragData {
 	type: "media";
 	mediaType: "image" | "video" | "audio";
-	targetElementTypes?: MaskableElement["type"][];
+	duration?: number;
+	targetElementTypes?: ElementType[];
 }
 
 export interface TextDragData extends BaseDragData {

@@ -1,47 +1,30 @@
-# Desktop
+# OpenCut Desktop
 
-The native desktop app, built with [GPUI](https://gpui.rs).
+This is the functional Tauri v2 desktop shell. It opens the Next.js editor in
+WebView2 and provides the native HyperFrames, Antigravity, render, and Studio
+commands.
 
-## Getting started
-
-**1. Install Rust:**
-
-```bash
-# Linux / macOS / WSL
-./script/setup-rust
-```
+From the repository root, run this command. It bypasses package-manager shims,
+so it also works on machines whose global npm/bun launcher is misconfigured:
 
 ```powershell
-# Windows
-powershell -ExecutionPolicy Bypass -File .\script\setup-rust.ps1
+node apps/desktop/script/tauri.mjs dev
 ```
 
-Both scripts skip installation if Rust is already present. On Linux/macOS/WSL only: after a fresh install, reload your shell with `source "$HOME/.cargo/env"`
+`bun run desktop:dev` and `npm run desktop:dev` are convenience aliases.
 
-**2. Install native dependencies:**
+The Tauri development command starts the web editor on
+`http://localhost:3000`, waits for it to become available, and then opens the
+desktop window. Do not use `cargo run -p opencut-desktop-gpui` unless you are
+working on the unfinished GPUI shell; that target currently contains only a
+placeholder screen.
 
-```bash
-# Linux / macOS / WSL
-./apps/desktop/script/setup
-```
+To create a release build:
 
 ```powershell
-# Windows
-powershell -ExecutionPolicy Bypass -File .\apps\desktop\script\setup.ps1
+node apps/desktop/script/tauri.mjs build
 ```
 
-**3. Run:**
-
-```bash
-cargo run -p opencut-desktop
-```
-
-## Platform notes
-
-**Linux:** supports apt (Debian/Ubuntu/Mint), dnf (Fedora/RHEL), and pacman (Arch).
-
-**macOS:** installs Xcode Command Line Tools if missing.
-
-**Windows:** the setup script checks for Visual Studio Build Tools. If missing, it prints the install link.
-
-**WSL:** runs the same scripts as Linux. Window rendering works via WSLg on Windows 11 and Windows 10 22H2+. If you're on an older build, test on the host instead.
+Release builds load `https://www.opencut.pro` by default. Set
+`OPENCUT_DESKTOP_URL` before launching the executable to point it at a different
+editor deployment.

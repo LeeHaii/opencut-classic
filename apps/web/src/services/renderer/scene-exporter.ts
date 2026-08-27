@@ -19,6 +19,7 @@ import { frameRateToFloat } from "@/fps/utils";
 import type { RootNode } from "./nodes/root-node";
 import type { ExportFormat, ExportQuality } from "@/export";
 import { CanvasRenderer } from "./canvas-renderer";
+import { disposeBrowserHyperframesSessions } from "@/hyperframes/browser-frame-renderer";
 
 type ExportParams = {
 	width: number;
@@ -67,6 +68,7 @@ export class SceneExporter extends EventEmitter<SceneExporterEvents> {
 			width,
 			height,
 			fps,
+			renderHyperframesDom: true,
 		});
 
 		this.format = format;
@@ -129,43 +131,47 @@ export class SceneExporter extends EventEmitter<SceneExporterEvents> {
 
 		await output.start();
 
-		if (audioSource && this.audioBuffer) {
-			await audioSource.add(this.audioBuffer);
-			audioSource.close();
-		}
+		try {
+			if (audioSource && this.audioBuffer) {
+				await audioSource.add(this.audioBuffer);
+				audioSource.close();
+			}
 
-		for (let i = 0; i < frameCount; i++) {
+			for (let i = 0; i < frameCount; i++) {
+				if (this.isCancelled) {
+					await output.cancel();
+					this.emit("cancelled");
+					return null;
+				}
+
+				const timeTicks = i * ticksPerFrame;
+				const timeSeconds = mediaTimeToSeconds({ time: timeTicks });
+				await this.renderer.render({ node: rootNode, time: timeTicks });
+				await videoSource.add(timeSeconds, 1 / fpsFloat);
+
+				this.emit("progress", i / frameCount);
+			}
+
 			if (this.isCancelled) {
 				await output.cancel();
 				this.emit("cancelled");
 				return null;
 			}
 
-			const timeTicks = i * ticksPerFrame;
-			const timeSeconds = mediaTimeToSeconds({ time: timeTicks });
-			await this.renderer.render({ node: rootNode, time: timeTicks });
-			await videoSource.add(timeSeconds, 1 / fpsFloat);
+			videoSource.close();
+			await output.finalize();
+			this.emit("progress", 1);
 
-			this.emit("progress", i / frameCount);
+			const buffer = output.target.buffer;
+			if (!buffer) {
+				this.emit("error", new Error("Failed to export video"));
+				return null;
+			}
+
+			this.emit("complete", buffer);
+			return buffer;
+		} finally {
+			disposeBrowserHyperframesSessions();
 		}
-
-		if (this.isCancelled) {
-			await output.cancel();
-			this.emit("cancelled");
-			return null;
-		}
-
-		videoSource.close();
-		await output.finalize();
-		this.emit("progress", 1);
-
-		const buffer = output.target.buffer;
-		if (!buffer) {
-			this.emit("error", new Error("Failed to export video"));
-			return null;
-		}
-
-		this.emit("complete", buffer);
-		return buffer;
 	}
 }

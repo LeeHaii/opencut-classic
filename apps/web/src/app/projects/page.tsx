@@ -45,6 +45,7 @@ import {
 	Edit03Icon,
 	ArrowDown02Icon,
 	InformationCircleIcon,
+	Settings01Icon,
 } from "@hugeicons/core-free-icons";
 import { OcVideoIcon } from "@/components/icons";
 import { Label } from "@/components/ui/label";
@@ -67,6 +68,7 @@ import { ProjectInfoDialog } from "@/project/components/project-info-dialog";
 import { RenameProjectDialog } from "@/project/components/rename-project-dialog";
 import { cn } from "@/utils/ui";
 import { ChangelogNotification } from "@/changelog/components/changelog-notification";
+import { LocationSettingsDialog } from "@/project/components/location-settings-dialog";
 const formatProjectDuration = ({
 	duration,
 }: {
@@ -139,9 +141,14 @@ export default function ProjectsPage() {
 
 function ProjectsHeader() {
 	const { viewMode, isHydrated, setViewMode } = useProjectsStore();
+	const [isSettingsOpen, setIsSettingsOpen] = useState(false);
 
 	return (
 		<header className="sticky top-0 z-20 px-8 bg-background flex flex-col gap-2">
+			<LocationSettingsDialog
+				open={isSettingsOpen}
+				onOpenChange={setIsSettingsOpen}
+			/>
 			<div className="flex items-center justify-between h-16 pt-2">
 				<div className="flex items-center gap-5">
 					<Breadcrumb>
@@ -184,6 +191,15 @@ function ProjectsHeader() {
 
 				<div className="flex items-center gap-3 md:gap-4">
 					<SearchBar className="hidden md:block" />
+					<Button
+						variant="outline"
+						size="icon"
+						className="size-10 rounded-md"
+						aria-label="Open storage settings"
+						onClick={() => setIsSettingsOpen(true)}
+					>
+						<HugeiconsIcon icon={Settings01Icon} className="size-4" />
+					</Button>
 					<NewProjectButton />
 				</div>
 			</div>
@@ -875,17 +891,9 @@ function ProjectMenu({
 					}
 					size="icon"
 					aria-label="Project menu"
-					onClick={(event) =>
-						handleMenuClick({
-							event: event as unknown as MouseEvent<HTMLButtonElement>,
-						})
-					}
+					onClick={(event) => handleMenuClick({ event })}
 					onMouseDown={(event) => event.stopPropagation()}
-					onKeyDown={(event) =>
-						handleMenuKeyDown({
-							event: event as unknown as KeyboardEvent<HTMLButtonElement>,
-						})
-					}
+					onKeyDown={(event) => handleMenuKeyDown({ event })}
 				>
 					<HugeiconsIcon
 						icon={MoreHorizontalIcon}
@@ -978,7 +986,7 @@ function EmptyState() {
 					<div className="flex flex-col items-center gap-3">
 						<h3 className="text-lg font-medium">No results found</h3>
 						<p className="text-muted-foreground max-w-md">
-							Your search for "{searchQuery}" did not return any results.
+							{`Your search for "${searchQuery}" did not return any results.`}
 						</p>
 					</div>
 				</div>

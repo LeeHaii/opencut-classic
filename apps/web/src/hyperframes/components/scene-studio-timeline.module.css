@@ -1,0 +1,101 @@
+.root :global([data-timeline-row]) {
+	background: var(--background) !important;
+}
+
+.root :global(.timeline-clip) {
+	background-color: color-mix(
+		in srgb,
+		var(--primary) 16%,
+		var(--background)
+	);
+	border: 1px solid color-mix(in srgb, var(--primary) 36%, var(--border));
+	box-shadow: none;
+	color: var(--foreground);
+}
+
+.root :global(.timeline-clip::before) {
+	position: absolute;
+	inset: 0;
+	pointer-events: none;
+	border-radius: inherit;
+	background: color-mix(in srgb, var(--primary) 12%, transparent);
+	content: "";
+	opacity: 0;
+}
+
+.root :global(.timeline-clip[data-active]) {
+	border-color: color-mix(in srgb, var(--primary) 70%, var(--border));
+}
+
+.root :global(.timeline-clip[data-active]::before) {
+	opacity: 1;
+}
+
+.root :global(.timeline-clip.is-hovered) {
+	background-color: color-mix(
+		in srgb,
+		var(--primary) 22%,
+		var(--background)
+	);
+	border-color: var(--primary);
+}
+
+.root :global(.timeline-clip.is-selected) {
+	border-color: var(--primary);
+	box-shadow: 0 0 0 1px color-mix(in srgb, var(--primary) 42%, transparent);
+}
+
+.root :global(.timeline-clip.is-dragging) {
+	background-color: color-mix(
+		in srgb,
+		var(--primary) 28%,
+		var(--background)
+	);
+	box-shadow: 0 8px 20px rgb(0 0 0 / 20%);
+}
+
+.root :global(.timeline-clip__label) {
+	position: absolute;
+	top: 6px;
+	right: 9px;
+	left: 10px;
+	z-index: 2;
+	overflow: hidden;
+	color: var(--foreground);
+	font-size: 10px;
+	font-weight: 600;
+	line-height: 1;
+	pointer-events: none;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.root :global(.timeline-clip__timecode) {
+	position: absolute;
+	right: 9px;
+	bottom: 6px;
+	left: 10px;
+	z-index: 2;
+	overflow: hidden;
+	color: var(--muted-foreground);
+	font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+	font-size: 9px;
+	font-variant-numeric: tabular-nums;
+	line-height: 1;
+	pointer-events: none;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.root :global(.timeline-clip__handle-bar) {
+	background: var(--primary) !important;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+	.root :global(.timeline-clip) {
+		transition:
+			background-color 140ms ease,
+			border-color 140ms ease,
+			box-shadow 140ms ease;
+	}
+}

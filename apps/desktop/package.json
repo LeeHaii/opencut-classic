@@ -1,0 +1,17 @@
+{
+	"name": "@opencut/desktop",
+	"version": "0.1.0",
+	"private": true,
+	"description": "OpenCut desktop shell (Tauri v2) with HyperFrames + Antigravity CLI integration",
+	"scripts": {
+		"tauri": "node script/tauri.mjs",
+		"dev": "node script/tauri.mjs dev",
+		"build": "node script/tauri.mjs build"
+	},
+	"dependencies": {
+		"hyperframes": "^0.7.108"
+	},
+	"devDependencies": {
+		"@tauri-apps/cli": "^2"
+	}
+}
