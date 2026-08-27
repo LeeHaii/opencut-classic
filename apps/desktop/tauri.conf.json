@@ -1,6 +1,6 @@
 {
 	"$schema": "https://schema.tauri.app/config/2",
-	"productName": "OpenCut",
+	"productName": "RhymxCut",
 	"version": "0.1.0",
 	"identifier": "pro.opencut.desktop",
 	"build": {
@@ -22,6 +22,6 @@
 		"resources": {
 			"resources/hyperframes-cli": "hyperframes-cli"
 		},
-		"icon": ["icons/icon.ico"]
+		"icon": ["icons/chitoge.ico"]
 	}
 }

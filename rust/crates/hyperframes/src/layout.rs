@@ -20,8 +20,19 @@ pub struct CompositionDirs {
 }
 
 pub fn composition_dirs(base: &Path, project_id: &str, element_id: &str) -> CompositionDirs {
-    let root = base
-        .join("projects")
+    composition_dirs_in(&base.join("projects"), project_id, element_id)
+}
+
+/// Resolve a composition from an explicit projects directory.
+///
+/// Desktop users can relocate this directory without changing the portable
+/// layout shared by rendering, Studio, and AI workspaces.
+pub fn composition_dirs_in(
+    projects_dir: &Path,
+    project_id: &str,
+    element_id: &str,
+) -> CompositionDirs {
+    let root = projects_dir
         .join(project_id)
         .join("hyperframes")
         .join(element_id);

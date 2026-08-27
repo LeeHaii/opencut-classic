@@ -76,8 +76,8 @@ pub fn hf_doctor(app: AppHandle) -> DoctorReport {
         version: cli_version,
     };
 
-    let media_base = crate::commands::project_base(&app)
-        .map(|base| base.join("projects").to_string_lossy().into_owned())
+    let media_base = crate::commands::settings::hyperframes_location(&app)
+        .map(|base| base.to_string_lossy().into_owned())
         .unwrap_or_default();
 
     DoctorReport {

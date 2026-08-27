@@ -85,8 +85,7 @@ pub fn antigravity_run(
         ));
     }
 
-    let workspace = crate::commands::project_base(&app)?
-        .join("projects")
+    let workspace = crate::commands::settings::hyperframes_location(&app)?
         .join(&request.project_id)
         .join("agent-workspace");
     std::fs::create_dir_all(&workspace)
