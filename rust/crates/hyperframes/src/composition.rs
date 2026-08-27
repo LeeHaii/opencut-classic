@@ -139,9 +139,8 @@ pub fn seed_composition(spec: &SeedSpec<'_>) -> String {
 <script>
   window.__timelines = window.__timelines || {{}};
   window.__timelines["{id}"] = (function () {{
-    const rootSel = "#" + "{id}";
     const tl = gsap.timeline({{ paused: true }});
-    tl.from(rootSel + " h1", {{ opacity: 0, y: 40, duration: 0.8 }}, 0);
+    tl.from("#{id} h1", {{ opacity: 0, y: 40, duration: 0.8 }}, 0);
     return tl;
   }})();
 </script>
@@ -411,6 +410,8 @@ mod tests {
         });
         assert!(seed.contains("data-composition-id=\"seed-1\""));
         assert!(seed.contains("__timelines[\"seed-1\"]"));
+        assert!(seed.contains("tl.from(\"#seed-1 h1\""));
+        assert!(!seed.contains("rootSel"));
         assert!(validate_composition(&seed).is_ok());
     }
 }

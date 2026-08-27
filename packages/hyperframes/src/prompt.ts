@@ -2,17 +2,17 @@ import type { AgentChatMessage } from "./types";
 import { buildMotionDesignSkills } from "./design-skills";
 
 export interface PromptContext {
-	request: string
-	compositionId: string
+	request: string;
+	compositionId: string;
 	/** Duration of the clip being authored, in seconds. */
-	durationSecs: number
-	width: number
-	height: number
-	fps: number
+	durationSecs: number;
+	width: number;
+	height: number;
+	fps: number;
 	/** Recent conversation turns for continuity (already capped). */
-	recentTurns?: AgentChatMessage[]
+	recentTurns?: AgentChatMessage[];
 	/** Absolute paths of reference images copied into the agent workspace. */
-	referenceImages?: string[]
+	referenceImages?: string[];
 }
 
 const MAX_TURNS = 6;
@@ -37,12 +37,18 @@ export function buildAgentPrompt(context: PromptContext): string {
 
 	const history =
 		recentTurns.length > 0
-			? `\nRecent scene conversation:\n${recentTurns.slice(-MAX_TURNS).map((m) => `${m.role.toUpperCase()}: ${m.text}`).join("\n")}\n`
+			? `\nRecent scene conversation:\n${recentTurns
+					.slice(-MAX_TURNS)
+					.map((m) => `${m.role.toUpperCase()}: ${m.text}`)
+					.join("\n")}\n`
 			: "";
 
 	const references =
 		referenceImages.length > 0
-			? `\nVisual references (MANDATORY FIRST STEP — call view_file on each listed image file before writing any HTML):\n${referenceImages.slice(0, MAX_REFERENCES).map((p) => `- ${p}`).join("\n")}\n`
+			? `\nVisual references (MANDATORY FIRST STEP — call view_file on each listed image file before writing any HTML):\n${referenceImages
+					.slice(0, MAX_REFERENCES)
+					.map((p) => `- ${p}`)
+					.join("\n")}\n`
 			: "";
 
 	return `You are the motion-design agent inside OpenCut. Create ONE NEW HyperFrames child composition that fulfils the user's request.
@@ -53,6 +59,7 @@ Hard requirements:
 - The child root MUST NOT have data-track-index and its data-start must remain exactly zero; the host timeline controls where the whole child starts.
 - Every timed visual uses class="clip", data-start and data-duration in seconds, an integer data-track-index, plus a unique stable id attribute.
 - MANDATORY ANIMATION CONTRACT: load GSAP (<script src="https://cdn.jsdelivr.net/npm/gsap@3/dist/gsap.min.js"></script>) and register exactly ONE paused timeline as window.__timelines["${compositionId}"]. Drive ALL motion through tweens added to it. A composition without this registered timeline renders as a frozen frame and is invalid.
+- Use literal, stable CSS selector strings in GSAP calls (prefer unique element ids or data-hf-id attributes). Do not build animation targets through variables or string concatenation. Use GSAP percentage keyframes when authoring motion intended for detailed Studio editing; ordinary from/to/fromTo tweens remain supported as two endpoint keys.
 - Never animate with CSS transitions, CSS @keyframes, setTimeout, Date.now, Math.random, autoplaying media or wall-clock timing — CSS-only motion cannot be seeked and will appear static in preview and export.
 - Every visual element must be revealed or moved by timeline tweens (from/fromTo/to). A fully static composition is a failure. Start each element hidden (opacity 0 or masked) right at its clip's data-start so motion is always visible while playing; give elements that end early an exit tween.
 - Do not create a master timeline and do not use data-composition-src. Return only the new self-contained child animation.
@@ -68,11 +75,11 @@ User request: ${request}`;
 }
 
 export interface SeedSpec {
-	compositionId: string
-	width: number
-	height: number
-	durationSecs: number
-	fps: number
+	compositionId: string;
+	width: number;
+	height: number;
+	durationSecs: number;
+	fps: number;
 }
 
 /**
@@ -104,9 +111,8 @@ export function buildSeedComposition(spec: SeedSpec): string {
 <script>
   window.__timelines = window.__timelines || {};
   window.__timelines["${spec.compositionId}"] = (function () {
-    const rootSel = "#" + "${spec.compositionId}";
     const tl = gsap.timeline({ paused: true });
-    tl.from(rootSel + " h1", { opacity: 0, y: 40, duration: 0.8 }, 0);
+    tl.from("#${spec.compositionId} h1", { opacity: 0, y: 40, duration: 0.8 }, 0);
     return tl;
   })();
 </script>

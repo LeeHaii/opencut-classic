@@ -39,3 +39,129 @@ diff --git a/src/player/lib/thumbnailPolicy.ts b/src/player/lib/thumbnailPolicy.
  
  const studioThumbnailRuntimePolicy: ThumbnailRuntimePolicy =
    rawPolicy === "force-hidden" || rawPolicy === "legacy-default" ? rawPolicy : "follow-preference";
+diff --git a/src/player/components/useResolvedTimelineEditCallbacks.ts b/src/player/components/useResolvedTimelineEditCallbacks.ts
+--- a/src/player/components/useResolvedTimelineEditCallbacks.ts
++++ b/src/player/components/useResolvedTimelineEditCallbacks.ts
+@@ -12,4 +12,8 @@ export type TimelineEditOverrides = Pick<
+   | "onResizeElements"
+   | "onBlockedEditAttempt"
+   | "onSplitElement"
++  | "onDeleteKeyframe"
++  | "onDeleteAllKeyframes"
++  | "onMoveKeyframeToPlayhead"
++  | "onMoveKeyframe"
+ >;
+@@ -29,4 +33,8 @@ export function useResolvedTimelineEditCallbacks(
+     onResizeElements,
+     onBlockedEditAttempt,
+     onSplitElement,
++    onDeleteKeyframe,
++    onDeleteAllKeyframes,
++    onMoveKeyframeToPlayhead,
++    onMoveKeyframe,
+   } = overrides;
+@@ -42,4 +50,9 @@ export function useResolvedTimelineEditCallbacks(
+       onResizeElements: onResizeElements ?? ctx.onResizeElements,
+       onBlockedEditAttempt: onBlockedEditAttempt ?? ctx.onBlockedEditAttempt,
+       onSplitElement: onSplitElement ?? ctx.onSplitElement,
++      onDeleteKeyframe: onDeleteKeyframe ?? ctx.onDeleteKeyframe,
++      onDeleteAllKeyframes: onDeleteAllKeyframes ?? ctx.onDeleteAllKeyframes,
++      onMoveKeyframeToPlayhead:
++        onMoveKeyframeToPlayhead ?? ctx.onMoveKeyframeToPlayhead,
++      onMoveKeyframe: onMoveKeyframe ?? ctx.onMoveKeyframe,
+     }),
+@@ -55,6 +68,10 @@ export function useResolvedTimelineEditCallbacks(
+       onResizeElements,
+       onBlockedEditAttempt,
+       onSplitElement,
++      onDeleteKeyframe,
++      onDeleteAllKeyframes,
++      onMoveKeyframeToPlayhead,
++      onMoveKeyframe,
+     ],
+   );
+ }
+diff --git a/src/player/components/Timeline.tsx b/src/player/components/Timeline.tsx
+--- a/src/player/components/Timeline.tsx
++++ b/src/player/components/Timeline.tsx
+@@ -79,4 +79,8 @@ export const Timeline = memo(function Timeline({
+   onResizeElements: onResizeElementsOverride,
+   onBlockedEditAttempt: onBlockedEditAttemptOverride,
+   onSplitElement: onSplitElementOverride,
++  onDeleteKeyframe: onDeleteKeyframeOverride,
++  onDeleteAllKeyframes: onDeleteAllKeyframesOverride,
++  onMoveKeyframeToPlayhead: onMoveKeyframeToPlayheadOverride,
++  onMoveKeyframe: onMoveKeyframeOverride,
+   onSelectElement,
+@@ -102,4 +106,8 @@ export const Timeline = memo(function Timeline({
+     onResizeElements: onResizeElementsOverride,
+     onBlockedEditAttempt: onBlockedEditAttemptOverride,
+     onSplitElement: onSplitElementOverride,
++    onDeleteKeyframe: onDeleteKeyframeOverride,
++    onDeleteAllKeyframes: onDeleteAllKeyframesOverride,
++    onMoveKeyframeToPlayhead: onMoveKeyframeToPlayheadOverride,
++    onMoveKeyframe: onMoveKeyframeOverride,
+   });
+diff --git a/dist/index.d.ts b/dist/index.d.ts
+--- a/dist/index.d.ts
++++ b/dist/index.d.ts
+@@ -769,3 +769,7 @@ interface TimelineProps extends TimelineDropCallbacks, TimelineEditOverrides {
+     /** Project-scoped reset boundary; soft source refreshes retain the same epoch. */
+     sessionEpoch?: number;
++    onDeleteKeyframe?: TimelineEditCallbacks["onDeleteKeyframe"];
++    onDeleteAllKeyframes?: TimelineEditCallbacks["onDeleteAllKeyframes"];
++    onMoveKeyframeToPlayhead?: TimelineEditCallbacks["onMoveKeyframeToPlayhead"];
++    onMoveKeyframe?: TimelineEditCallbacks["onMoveKeyframe"];
+     onSeek?: (time: number) => void;
+diff --git a/dist/index.js b/dist/index.js
+--- a/dist/index.js
++++ b/dist/index.js
+@@ -21770,4 +21770,8 @@ function useResolvedTimelineEditCallbacks(overrides) {
+     onResizeElements,
+     onBlockedEditAttempt,
+-    onSplitElement
++    onSplitElement,
++    onDeleteKeyframe,
++    onDeleteAllKeyframes,
++    onMoveKeyframeToPlayhead,
++    onMoveKeyframe
+   } = overrides;
+@@ -21781,4 +21785,8 @@ function useResolvedTimelineEditCallbacks(overrides) {
+       onResizeElements: onResizeElements ?? ctx3.onResizeElements,
+       onBlockedEditAttempt: onBlockedEditAttempt ?? ctx3.onBlockedEditAttempt,
+-      onSplitElement: onSplitElement ?? ctx3.onSplitElement
++      onSplitElement: onSplitElement ?? ctx3.onSplitElement,
++      onDeleteKeyframe: onDeleteKeyframe ?? ctx3.onDeleteKeyframe,
++      onDeleteAllKeyframes: onDeleteAllKeyframes ?? ctx3.onDeleteAllKeyframes,
++      onMoveKeyframeToPlayhead: onMoveKeyframeToPlayhead ?? ctx3.onMoveKeyframeToPlayhead,
++      onMoveKeyframe: onMoveKeyframe ?? ctx3.onMoveKeyframe
+     }),
+@@ -21790,4 +21798,8 @@ function useResolvedTimelineEditCallbacks(overrides) {
+       onResizeElements,
+       onBlockedEditAttempt,
+-      onSplitElement
++      onSplitElement,
++      onDeleteKeyframe,
++      onDeleteAllKeyframes,
++      onMoveKeyframeToPlayhead,
++      onMoveKeyframe
+     ]
+@@ -22941,4 +22953,8 @@ var Timeline = memo16(function Timeline2({
+   onResizeElements: onResizeElementsOverride,
+   onBlockedEditAttempt: onBlockedEditAttemptOverride,
+   onSplitElement: onSplitElementOverride,
++  onDeleteKeyframe: onDeleteKeyframeOverride,
++  onDeleteAllKeyframes: onDeleteAllKeyframesOverride,
++  onMoveKeyframeToPlayhead: onMoveKeyframeToPlayheadOverride,
++  onMoveKeyframe: onMoveKeyframeOverride,
+   onSelectElement,
+@@ -22964,4 +22980,8 @@ var Timeline = memo16(function Timeline2({
+     onResizeElements: onResizeElementsOverride,
+     onBlockedEditAttempt: onBlockedEditAttemptOverride,
+-    onSplitElement: onSplitElementOverride
++    onSplitElement: onSplitElementOverride,
++    onDeleteKeyframe: onDeleteKeyframeOverride,
++    onDeleteAllKeyframes: onDeleteAllKeyframesOverride,
++    onMoveKeyframeToPlayhead: onMoveKeyframeToPlayheadOverride,
++    onMoveKeyframe: onMoveKeyframeOverride
+   });

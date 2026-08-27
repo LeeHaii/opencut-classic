@@ -14,6 +14,78 @@ export class MediaManager {
 
 	constructor(private editor: EditorCore) {}
 
+	addPendingMediaAsset({
+		asset,
+	}: {
+		asset: Omit<MediaAsset, "id" | "downloadStatus">;
+	}): MediaAsset {
+		const pendingAsset: MediaAsset = {
+			...asset,
+			id: generateUUID(),
+			downloadStatus: "pending",
+		};
+		this.assets = [...this.assets, pendingAsset];
+		this.notify();
+		return pendingAsset;
+	}
+
+	async finalizePendingMediaAsset({
+		projectId,
+		id,
+		asset,
+	}: {
+		projectId: string;
+		id: string;
+		asset: Omit<MediaAsset, "id" | "downloadStatus">;
+	}): Promise<MediaAsset | null> {
+		const pendingAsset = this.assets.find((item) => item.id === id);
+		if (!pendingAsset) return null;
+
+		const readyAsset: MediaAsset = {
+			...asset,
+			id,
+			downloadStatus: "ready",
+		};
+		this.assets = this.assets.map((item) =>
+			item.id === id ? readyAsset : item,
+		);
+		this.notify();
+
+		try {
+			await storageService.saveMediaAsset({
+				projectId,
+				mediaAsset: readyAsset,
+			});
+			this.editor.project.ratchetFpsForImportedMedia({
+				importedAssets: [readyAsset],
+			});
+			return readyAsset;
+		} catch (error) {
+			console.error("Failed to save downloaded media asset:", error);
+			this.assets = this.assets.map((item) =>
+				item.id === id
+					? { ...pendingAsset, downloadStatus: "failed" }
+					: item,
+			);
+			this.notify();
+
+			if (storageService.isQuotaExceededError({ error })) {
+				toast.error("Not enough browser storage", {
+					description: error instanceof Error ? error.message : undefined,
+				});
+			}
+
+			return null;
+		}
+	}
+
+	markMediaAssetDownloadFailed({ id }: { id: string }): void {
+		this.assets = this.assets.map((asset) =>
+			asset.id === id ? { ...asset, downloadStatus: "failed" } : asset,
+		);
+		this.notify();
+	}
+
 	async addMediaAsset({
 		projectId,
 		asset,

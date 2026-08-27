@@ -38,3 +38,26 @@ test("resolves deferred media only when the drop target requests it", async () =
 	dragSource.end();
 	expect(dragSource.resolveForDrop()).toBeNull();
 });
+
+test("can synchronously reserve a pending media asset on drop", () => {
+	const dragSource = new TimelineDragSource();
+	const provisional: MediaDragData = {
+		id: "",
+		type: "media",
+		mediaType: "video",
+		name: "Stock clip",
+		duration: 9,
+	};
+	const pending: MediaDragData = { ...provisional, id: "pending-media" };
+
+	dragSource.begin({
+		dataTransfer: {
+			effectAllowed: "none",
+			setData: () => undefined,
+		},
+		dragData: provisional,
+		resolveDragData: () => pending,
+	});
+
+	expect(dragSource.resolveForDrop()).toEqual(pending);
+});

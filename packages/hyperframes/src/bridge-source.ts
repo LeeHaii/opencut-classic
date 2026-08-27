@@ -165,6 +165,129 @@ export const previewBridgeSource = String.raw`
     };
   }
 
+  function runtimeTargetKeys(target) {
+    if (!target || target.nodeType !== 1) return [];
+    var keys = [];
+    if (target.id) keys.push(target.id);
+    var hfId = target.getAttribute("data-hf-id");
+    if (hfId) keys.push(hfId);
+    var selector = selectorForElement(target);
+    if (selector) keys.push(selector);
+    return keys;
+  }
+
+  function runtimeProperties(vars) {
+    var properties = {};
+    var ignored = {
+      duration: 1, delay: 1, ease: 1, stagger: 1, keyframes: 1,
+      paused: 1, overwrite: 1, immediateRender: 1, runBackwards: 1,
+      startAt: 1, parent: 1, callbackScope: 1, repeat: 1,
+      repeatDelay: 1, yoyo: 1, id: 1, data: 1
+    };
+    Object.keys(vars || {}).forEach(function (property) {
+      if (ignored[property] || property.indexOf("on") === 0) return;
+      var value = vars[property];
+      if (typeof value === "number" || typeof value === "string") {
+        properties[property] = value;
+      }
+    });
+    return properties;
+  }
+
+  function runtimePropertyGroup(properties) {
+    var keys = Object.keys(properties);
+    if (keys.some(function (key) { return key === "x" || key === "y" || key === "xPercent" || key === "yPercent"; })) return "position";
+    if (keys.some(function (key) { return key === "scale" || key === "scaleX" || key === "scaleY"; })) return "scale";
+    if (keys.some(function (key) { return key === "rotation" || key === "rotationX" || key === "rotationY"; })) return "rotation";
+    if (keys.some(function (key) { return key === "width" || key === "height"; })) return "size";
+    if (keys.some(function (key) { return key === "opacity" || key === "autoAlpha"; })) return "visual";
+    return "animation";
+  }
+
+  function sanitizeRuntimeKeyframe(entry, percentage) {
+    if (!entry || typeof entry !== "object") return null;
+    var properties = runtimeProperties(entry);
+    return {
+      percentage: percentage,
+      properties: properties,
+      ease: typeof entry.ease === "string" ? entry.ease : undefined
+    };
+  }
+
+  function runtimeKeyframes(vars, properties) {
+    var source = vars && vars.keyframes;
+    var result = [];
+    if (Array.isArray(source)) {
+      for (var i = 0; i < source.length; i++) {
+        var percentage = source.length > 1 ? (i / (source.length - 1)) * 100 : 0;
+        var row = sanitizeRuntimeKeyframe(source[i], percentage);
+        if (row) result.push(row);
+      }
+    } else if (source && typeof source === "object") {
+      Object.keys(source).forEach(function (key) {
+        var match = /^(\d+(?:\.\d+)?)%$/.exec(key);
+        if (!match) return;
+        var row = sanitizeRuntimeKeyframe(source[key], Number.parseFloat(match[1]));
+        if (row) result.push(row);
+      });
+    }
+    if (result.length > 0) {
+      return result.sort(function (a, b) { return a.percentage - b.percentage; });
+    }
+    return [
+      { percentage: 0, properties: {} },
+      { percentage: 100, properties: properties, ease: typeof vars.ease === "string" ? vars.ease : undefined }
+    ];
+  }
+
+  function scanRuntimeMotion() {
+    if (!timeline || typeof timeline.getChildren !== "function") return;
+    var children;
+    try {
+      children = timeline.getChildren(true, true, false) || [];
+    } catch (error) {
+      return;
+    }
+    var rootStart = typeof timeline.globalTime === "function" ? timeline.globalTime(0) : 0;
+    var animations = [];
+    for (var i = 0; i < children.length; i++) {
+      var child = children[i];
+      if (!child || typeof child.targets !== "function") continue;
+      var targets;
+      try { targets = child.targets() || []; } catch (error) { targets = []; }
+      var targetKeys = [];
+      for (var targetIndex = 0; targetIndex < targets.length; targetIndex++) {
+        var keys = runtimeTargetKeys(targets[targetIndex]);
+        for (var keyIndex = 0; keyIndex < keys.length; keyIndex++) {
+          if (targetKeys.indexOf(keys[keyIndex]) < 0) targetKeys.push(keys[keyIndex]);
+        }
+      }
+      if (targetKeys.length === 0) continue;
+      var vars = child.vars || {};
+      var properties = runtimeProperties(vars);
+      var childStart = typeof child.globalTime === "function"
+        ? child.globalTime(0) - rootStart
+        : (typeof child.startTime === "function" ? child.startTime() : 0);
+      var childDuration = typeof child.duration === "function" ? child.duration() : Number(vars.duration) || 0;
+      if (!Number.isFinite(childStart)) childStart = 0;
+      if (!Number.isFinite(childDuration) || childDuration < 0) childDuration = 0;
+	  if (childDuration === 0) continue;
+      animations.push({
+        id: "runtime:" + i + ":" + targetKeys[0],
+        targetKeys: targetKeys,
+        targetSelector: targetKeys[0],
+        start: childStart,
+        duration: childDuration,
+        propertyGroup: runtimePropertyGroup(properties),
+        properties: properties,
+        keyframes: runtimeKeyframes(vars, properties)
+      });
+    }
+    post("motion-snapshot", {
+      motion: { compositionId: compositionId || "", animations: animations }
+    });
+  }
+
   function ensureSelectionOverlay() {
     if (selectionOverlay || !document.body) return;
     selectionOverlay = document.createElement("div");
@@ -381,6 +504,8 @@ export const previewBridgeSource = String.raw`
             : String(snapshotError)
         });
       }
+	} else if (data.action === "scan-motion") {
+	  scanRuntimeMotion();
     } else if (data.action === "set-playback-rate") {
       playbackRate = typeof data.rate === "number" && data.rate > 0 ? data.rate : 1;
     }
@@ -401,6 +526,7 @@ export const previewBridgeSource = String.raw`
       updateTimedElements();
       ensureSelectionOverlay();
       post("ready", { duration: duration, currentTime: 0, compositionId: compositionId });
+	  scanRuntimeMotion();
       requestAnimationFrame(tick);
     } else if (tries >= MAX_TRIES) {
       clearInterval(poller);

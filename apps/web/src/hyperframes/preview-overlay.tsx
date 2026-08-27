@@ -27,6 +27,7 @@ import {
 	postStudioPreviewAction,
 	type StudioPreviewSelection,
 } from "./studio-document";
+import { parseStudioRuntimeMotionSnapshot } from "./studio-animations";
 import { useHyperframesStudioStore } from "./studio-store";
 
 interface PreviewMessage {
@@ -34,6 +35,7 @@ interface PreviewMessage {
 	type?: string;
 	message?: string;
 	element?: StudioPreviewSelection;
+	motion?: unknown;
 }
 
 interface HyperframesPreviewProps {
@@ -108,6 +110,9 @@ function HyperframesPreview({
 	const setPreviewSelection = useHyperframesStudioStore(
 		(state) => state.setPreviewSelection,
 	);
+	const setRuntimeMotion = useHyperframesStudioStore(
+		(state) => state.setRuntimeMotion,
+	);
 	const selectedLayerSelector = useHyperframesStudioStore(
 		(state) => state.selectedLayerSelector,
 	);
@@ -115,6 +120,9 @@ function HyperframesPreview({
 		() => preparePreviewHtml(element.html),
 		[element.html],
 	);
+	useEffect(() => {
+		if (isStudio) setRuntimeMotion(null);
+	}, [isStudio, preparedHtml, setRuntimeMotion]);
 	const localTime = getElementLocalTime({
 		timelineTime,
 		elementStartTime: element.startTime,
@@ -219,6 +227,13 @@ function HyperframesPreview({
 				);
 			} else if (
 				isStudio &&
+				event.data.type === "motion-snapshot" &&
+				event.data.motion
+			) {
+				const snapshot = parseStudioRuntimeMotionSnapshot(event.data.motion);
+				if (snapshot) setRuntimeMotion(snapshot);
+			} else if (
+				isStudio &&
 				(event.data.type === "element-selected" ||
 					event.data.type === "element-preview-updated") &&
 				event.data.element
@@ -239,7 +254,14 @@ function HyperframesPreview({
 			unsubscribeUpdate();
 			unsubscribeSeek();
 		};
-	}, [editor, element, isStudio, selectedLayerSelector, setPreviewSelection]);
+	}, [
+		editor,
+		element,
+		isStudio,
+		selectedLayerSelector,
+		setPreviewSelection,
+		setRuntimeMotion,
+	]);
 
 	return (
 		<div

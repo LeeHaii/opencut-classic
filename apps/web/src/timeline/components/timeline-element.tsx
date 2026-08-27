@@ -2,6 +2,7 @@
 
 import { createContext, useContext } from "react";
 import { Replace } from "lucide-react";
+import { Spinner } from "@/components/ui/spinner";
 import { useEditor } from "@/editor/use-editor";
 import { useAssetsPanelStore } from "@/components/editor/panels/assets/assets-panel-store";
 import { AudioWaveform, WAVEFORM_GAIN_SAMPLE_COUNT } from "./audio-waveform";
@@ -1130,6 +1131,8 @@ function TiledMediaContent({
 		element.type === "video"
 			? mediaAsset?.thumbnailUrl
 			: (mediaAsset?.thumbnailUrl ?? mediaAsset?.url);
+	const isPendingDownload = mediaAsset?.downloadStatus === "pending";
+	const didDownloadFail = mediaAsset?.downloadStatus === "failed";
 
 	if (!imageUrl) {
 		return (
@@ -1152,6 +1155,7 @@ function TiledMediaContent({
 					backgroundRepeat: "repeat-x",
 					backgroundSize: `${tileWidth}px ${trackHeight}px`,
 					backgroundPosition: "left center",
+					filter: isPendingDownload ? "brightness(0.55)" : undefined,
 					pointerEvents: "none",
 				}}
 			/>
@@ -1164,6 +1168,16 @@ function TiledMediaContent({
 				}
 				hasFade={true}
 			/>
+			{isPendingDownload && (
+				<div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center bg-black/15">
+					<Spinner className="size-5 text-white drop-shadow" />
+				</div>
+			)}
+			{didDownloadFail && (
+				<div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center bg-black/55 px-2 text-center text-[10px] font-medium text-white">
+					Download failed
+				</div>
+			)}
 		</>
 	);
 }

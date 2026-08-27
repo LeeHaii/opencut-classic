@@ -6,6 +6,8 @@ export interface MediaAsset extends Omit<
 	MediaAssetData,
 	"size" | "lastModified"
 > {
+	/** Runtime-only state while a stock asset is being downloaded. */
+	downloadStatus?: "pending" | "ready" | "failed";
 	/**
 	 * Local bytes for the asset. Absent for remote (streamed) assets that
 	 * have not been downloaded for offline use yet.

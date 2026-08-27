@@ -1,5 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { extractHtml, quickValidate, auditCompositionAnimation } from "../src/extract.js";
+import {
+	extractHtml,
+	quickValidate,
+	auditCompositionAnimation,
+} from "../src/extract.js";
 import { buildSeedComposition, buildAgentPrompt } from "../src/prompt.js";
 import {
 	buildMotionDesignSkills,
@@ -84,6 +88,9 @@ describe("prompt + seed", () => {
 		expect(prompt).toContain("FLOW & CHOREOGRAPHY");
 		expect(prompt).toContain('window.__timelines["s1"]');
 		expect(prompt).toContain("MANDATORY ANIMATION CONTRACT");
+		expect(prompt).toContain("literal, stable CSS selector strings");
+		expect(seed).toContain('tl.from("#s1 h1"');
+		expect(seed).not.toContain("rootSel");
 		expect(prompt).not.toContain("${");
 	});
 });
@@ -138,7 +145,9 @@ describe("design skills", () => {
 		const hype = deriveStyleDirection("hype gaming launch trailer");
 		expect(hype.name).toBe("Bold kinetic / hype edit");
 
-		const fallback = deriveStyleDirection("something completely unclassifiable");
+		const fallback = deriveStyleDirection(
+			"something completely unclassifiable",
+		);
 		expect(fallback.name).toBe("Clean modern minimal");
 	});
 });
@@ -151,6 +160,8 @@ describe("preparePreviewHtml", () => {
 		expect(prepared).toContain('post("snapshot"');
 		expect(prepared).toContain('data.action === "select-element"');
 		expect(prepared).toContain('post("element-selected"');
+		expect(prepared).toContain('post("motion-snapshot"');
+		expect(prepared).toContain('data.action === "scan-motion"');
 		expect(prepared).toContain("data-opencut-studio-selection");
 		expect(prepared).toContain("</body>");
 	});

@@ -2,7 +2,9 @@ import type { TimelineDragData } from "@/timeline/drag";
 
 const TIMELINE_DRAG_MIME = "application/x-timeline-drag";
 
-export type TimelineDragDataResolver = () => Promise<TimelineDragData>;
+export type TimelineDragDataResolver = () =>
+	| TimelineDragData
+	| Promise<TimelineDragData>;
 type TimelineDataTransfer = Pick<DataTransfer, "effectAllowed" | "setData">;
 
 interface ActiveTimelineDrag {

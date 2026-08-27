@@ -1,7 +1,13 @@
 "use client";
 
 import { Plus } from "lucide-react";
-import { type ReactNode, useEffect, useRef, useState } from "react";
+import {
+	type ReactNode,
+	useCallback,
+	useEffect,
+	useRef,
+	useState,
+} from "react";
 import { createPortal } from "react-dom";
 import { AspectRatio } from "@/components/ui/aspect-ratio";
 import { Button } from "@/components/ui/button";
@@ -55,6 +61,10 @@ export function DraggableItem({
 	const [dragPosition, setDragPosition] = useState({ x: 0, y: 0 });
 	const dragRef = useRef<HTMLDivElement>(null);
 	const editor = useEditor();
+	const finishDrag = useCallback(() => {
+		setIsDragging(false);
+		editor.timeline.dragSource.end();
+	}, [editor]);
 
 	const handleAddToTimeline = () => {
 		onAddToTimeline?.({ currentTime: editor.playback.getCurrentTime() });
@@ -72,11 +82,17 @@ export function DraggableItem({
 		};
 
 		document.addEventListener("dragover", handleDragOver);
+		window.addEventListener("dragend", finishDrag, true);
+		window.addEventListener("drop", finishDrag);
+		window.addEventListener("blur", finishDrag);
 
 		return () => {
 			document.removeEventListener("dragover", handleDragOver);
+			window.removeEventListener("dragend", finishDrag, true);
+			window.removeEventListener("drop", finishDrag);
+			window.removeEventListener("blur", finishDrag);
 		};
-	}, [isDragging]);
+	}, [finishDrag, isDragging]);
 
 	const handleDragStart = (event: React.DragEvent) => {
 		event.dataTransfer.setDragImage(emptyImg, 0, 0);
@@ -91,11 +107,6 @@ export function DraggableItem({
 		setIsDragging(true);
 
 		onDragStart?.({ e: event });
-	};
-
-	const handleDragEnd = () => {
-		setIsDragging(false);
-		editor.timeline.dragSource.end();
 	};
 
 	return (
@@ -129,7 +140,7 @@ export function DraggableItem({
 								}
 							}}
 							onDragStart={isDraggable ? handleDragStart : undefined}
-							onDragEnd={isDraggable ? handleDragEnd : undefined}
+							onDragEnd={isDraggable ? finishDrag : undefined}
 						>
 							{preview}
 							{!isDragging && (
@@ -168,7 +179,7 @@ export function DraggableItem({
 						)}
 						draggable={isDraggable}
 						onDragStart={isDraggable ? handleDragStart : undefined}
-						onDragEnd={isDraggable ? handleDragEnd : undefined}
+						onDragEnd={isDraggable ? finishDrag : undefined}
 					>
 						<div className="size-6 shrink-0 overflow-hidden rounded-sm">
 							{preview}

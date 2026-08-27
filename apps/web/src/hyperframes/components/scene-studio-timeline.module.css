@@ -1,3 +1,7 @@
+.root :global([data-timeline-row]) {
+	background: var(--background) !important;
+}
+
 .root :global(.timeline-clip) {
 	background-color: color-mix(
 		in srgb,

@@ -1,7 +1,12 @@
 import { describe, expect, test } from "bun:test";
 import {
+	addStudioKeyframe,
+	buildStudioTimelineKeyframes,
 	getStudioLayerAnimations,
+	interpolateStudioKeyframeProperties,
 	moveStudioKeyframe,
+	parseStudioRuntimeMotionSnapshot,
+	removeAllStudioKeyframes,
 	scaleStudioLayerAnimations,
 	shiftStudioLayerAnimations,
 } from "../studio-animations";
@@ -143,5 +148,164 @@ tl.to("#title", {
 		}).animations;
 		expect(scaledAnimations[0]?.resolvedStart).toBe(1);
 		expect(scaledAnimations[0]?.duration).toBe(1);
+	});
+
+	test("synthesizes visible endpoint keys for a flat GSAP tween", () => {
+		const flatHtml = html.replace(
+			`keyframes: {
+    "0%": { x: 0, opacity: 0 },
+    "100%": { x: 100, opacity: 1 }
+  }`,
+			"x: 100, opacity: 1",
+		);
+		const result = getStudioLayerAnimations({
+			html: flatHtml,
+			layer: titleLayer,
+		});
+		expect(result.keyframes).toHaveLength(2);
+		expect(result.keyframes.map((keyframe) => keyframe.percentage)).toEqual([
+			0, 100,
+		]);
+		expect(result.keyframes.every((keyframe) => keyframe.synthesized)).toBe(
+			true,
+		);
+		expect(
+			buildStudioTimelineKeyframes({ html: flatHtml, layer: titleLayer })?.cache
+				?.keyframes,
+		).toHaveLength(2);
+	});
+
+	test("converts a flat tween before retiming an endpoint", async () => {
+		const flatHtml = html.replace(
+			`keyframes: {
+    "0%": { x: 0, opacity: 0 },
+    "100%": { x: 100, opacity: 1 }
+  }`,
+			"x: 100, opacity: 1",
+		);
+		const animation = getStudioLayerAnimations({
+			html: flatHtml,
+			layer: titleLayer,
+		}).animations[0];
+		expect(animation).toBeTruthy();
+		const patched = await moveStudioKeyframe({
+			html: flatHtml,
+			animationId: animation!.id,
+			fromPercentage: 0,
+			toPercentage: 25,
+			convertFlat: true,
+		});
+		const reparsed = getStudioLayerAnimations({
+			html: patched,
+			layer: titleLayer,
+		});
+		expect(reparsed.animations[0]?.keyframes).toBeTruthy();
+		expect(reparsed.keyframes.map((keyframe) => keyframe.percentage)).toEqual([
+			25, 100,
+		]);
+	});
+
+	test("adds an interpolated key at the playhead", async () => {
+		const result = getStudioLayerAnimations({ html, layer: titleLayer });
+		const animationId = result.animations[0]!.id;
+		const properties = interpolateStudioKeyframeProperties({
+			keyframes: result.keyframes,
+			percentage: 50,
+		});
+		expect(properties).toEqual({ x: 50, opacity: 0.5 });
+		const patched = await addStudioKeyframe({
+			html,
+			animationId,
+			percentage: 50,
+			properties,
+		});
+		expect(
+			getStudioLayerAnimations({
+				html: patched,
+				layer: titleLayer,
+			}).keyframes.map((keyframe) => keyframe.percentage),
+		).toEqual([0, 50, 100]);
+	});
+
+	test("removes synthesized endpoints by collapsing a flat tween to a hold", async () => {
+		const flatHtml = html.replace(
+			`keyframes: {
+    "0%": { x: 0, opacity: 0 },
+    "100%": { x: 100, opacity: 1 }
+  }`,
+			"x: 100, opacity: 1",
+		);
+		const animation = getStudioLayerAnimations({
+			html: flatHtml,
+			layer: titleLayer,
+		}).animations[0];
+		const patched = await removeAllStudioKeyframes({
+			html: flatHtml,
+			animationId: animation!.id,
+			convertFlat: true,
+		});
+		expect(
+			getStudioLayerAnimations({ html: patched, layer: titleLayer }).keyframes,
+		).toHaveLength(0);
+	});
+
+	test("uses a runtime snapshot when a dynamic selector cannot be attributed", () => {
+		const dynamicHtml = html.replace(
+			'tl.to("#title", {',
+			"const target = '#title';\ntl.to(target, {",
+		);
+		const result = getStudioLayerAnimations({
+			html: dynamicHtml,
+			layer: titleLayer,
+			runtimeSnapshot: {
+				compositionId: "scene",
+				animations: [
+					{
+						id: "runtime:0:title",
+						targetKeys: ["title"],
+						targetSelector: "title",
+						start: 0,
+						duration: 2,
+						propertyGroup: "position",
+						properties: { x: 100 },
+						keyframes: [
+							{ percentage: 0, properties: {} },
+							{ percentage: 100, properties: { x: 100 } },
+						],
+					},
+				],
+			},
+		});
+		expect(result.animations).toHaveLength(0);
+		expect(result.runtimeAnimations).toHaveLength(1);
+		expect(result.keyframes).toHaveLength(2);
+		expect(result.keyframes[0]?.editability).toBe("source");
+		expect(result.diagnostics[0]?.kind).toBe("runtime-only");
+	});
+
+	test("rejects unbounded or executable runtime motion payloads", () => {
+		expect(
+			parseStudioRuntimeMotionSnapshot({
+				compositionId: "scene",
+				animations: [
+					{
+						id: "bad",
+						targetKeys: ["title"],
+						targetSelector: "#title",
+						start: 0,
+						duration: 1,
+						propertyGroup: "position",
+						properties: { x: () => 100 },
+						keyframes: [],
+					},
+				],
+			}),
+		).toBeNull();
+		expect(
+			parseStudioRuntimeMotionSnapshot({
+				compositionId: "scene",
+				animations: new Array(2_001).fill({}),
+			}),
+		).toBeNull();
 	});
 });

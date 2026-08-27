@@ -31,7 +31,7 @@ const MAX_RESULTS = 40;
 interface StockEntry {
 	dragData: MediaDragData;
 	status: "idle" | "acquiring" | "ready" | "failed";
-	acquisition?: Promise<MediaDragData>;
+	acquisition?: Promise<void>;
 }
 
 export function StockPanelView() {
@@ -77,42 +77,44 @@ export function StockPanelView() {
 		}: {
 			candidate: StockCandidate;
 			entry: StockEntry;
-		}): Promise<MediaDragData> => {
+		}): MediaDragData => {
 			if (entry.status === "ready" && entry.dragData.id) {
-				return Promise.resolve(entry.dragData);
+				return entry.dragData;
 			}
-			if (entry.acquisition) return entry.acquisition;
+			if (entry.status === "acquiring" && entry.dragData.id) {
+				return entry.dragData;
+			}
 
+			const started = acquirerRef.current?.startAcquisition({
+				editor,
+				candidate,
+			});
+			if (!started) throw new Error("Download failed");
+			entry.dragData = { ...entry.dragData, id: started.mediaId };
 			entry.status = "acquiring";
 			setEntries((current) =>
 				current.get(candidate.id) === entry ? new Map(current) : current,
 			);
 
-			const acquisition = (async () => {
-				try {
-					const acquired = await acquirerRef.current?.acquire({
-						editor,
-						candidate,
-					});
-					if (!acquired) throw new Error("Download failed");
-					entry.dragData = {
-						...entry.dragData,
-						id: acquired.mediaId,
-					};
+			entry.acquisition = started.acquisition
+				.then((acquired) => {
+					entry.dragData = { ...entry.dragData, id: acquired.mediaId };
 					entry.status = "ready";
-					return entry.dragData;
-				} catch (error) {
+				})
+				.catch((error: unknown) => {
 					entry.status = "failed";
-					throw error;
-				} finally {
+					toast.error("Couldn't download stock video", {
+						description:
+							error instanceof Error ? error.message : "Download failed",
+					});
+				})
+				.finally(() => {
 					entry.acquisition = undefined;
 					setEntries((current) =>
 						current.get(candidate.id) === entry ? new Map(current) : current,
 					);
-				}
-			})();
-			entry.acquisition = acquisition;
-			return acquisition;
+				});
+			return entry.dragData;
 		},
 		[editor],
 	);
@@ -203,22 +205,15 @@ export function StockPanelView() {
 	);
 
 	const addCandidateToTimeline = useCallback(
-		async ({
+		({
 			candidate,
 			entry,
 		}: {
 			candidate: StockCandidate;
 			entry: StockEntry;
 		}) => {
-			try {
-				const dragData = await resolveForTimeline({ candidate, entry });
-				addToTimeline({ candidate, mediaId: dragData.id });
-			} catch (error) {
-				toast.error("Couldn't add stock video", {
-					description:
-						error instanceof Error ? error.message : "Download failed",
-				});
-			}
+			const dragData = resolveForTimeline({ candidate, entry });
+			addToTimeline({ candidate, mediaId: dragData.id });
 		},
 		[addToTimeline, resolveForTimeline],
 	);
@@ -308,6 +303,7 @@ export function StockPanelView() {
 								}
 								variant="card"
 								containerClassName="w-full"
+								shouldShowPlusOnDrag={false}
 								isDraggable={Boolean(entry && entry.status !== "acquiring")}
 								dragData={entry?.dragData ?? FALLBACK_DRAG_DATA}
 								resolveDragData={

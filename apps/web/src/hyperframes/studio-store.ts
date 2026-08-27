@@ -7,6 +7,7 @@ import type {
 	StudioTool,
 	StudioWorkspaceView,
 } from "./studio-document";
+import type { StudioRuntimeMotionSnapshot } from "./studio-animations";
 
 interface HyperframesStudioState {
 	/** Timeline element currently open in the in-app Scene Studio. */
@@ -16,6 +17,7 @@ interface HyperframesStudioState {
 	selectedLayerSelector: string | null;
 	previewSelection: StudioPreviewSelection | null;
 	previewIframe: HTMLIFrameElement | null;
+	runtimeMotion: StudioRuntimeMotionSnapshot | null;
 	tool: StudioTool;
 	workspaceView: StudioWorkspaceView;
 	localTimeSeconds: number;
@@ -30,6 +32,7 @@ interface HyperframesStudioState {
 	}) => void;
 	setPreviewSelection: (selection: StudioPreviewSelection | null) => void;
 	setPreviewIframe: (iframe: HTMLIFrameElement | null) => void;
+	setRuntimeMotion: (snapshot: StudioRuntimeMotionSnapshot | null) => void;
 	setTool: (tool: StudioTool) => void;
 	setWorkspaceView: (view: StudioWorkspaceView) => void;
 	setLocalTimeSeconds: (seconds: number) => void;
@@ -48,6 +51,7 @@ export const useHyperframesStudioStore = create<HyperframesStudioState>()(
 		selectedLayerSelector: null,
 		previewSelection: null,
 		previewIframe: null,
+		runtimeMotion: null,
 		tool: "select",
 		workspaceView: "layers",
 		localTimeSeconds: 0,
@@ -59,6 +63,7 @@ export const useHyperframesStudioStore = create<HyperframesStudioState>()(
 				selectedLayerSelector: null,
 				previewSelection: null,
 				previewIframe: null,
+				runtimeMotion: null,
 				tool: "select",
 				workspaceView: "layers",
 				localTimeSeconds: 0,
@@ -70,6 +75,7 @@ export const useHyperframesStudioStore = create<HyperframesStudioState>()(
 				selectedLayerSelector: null,
 				previewSelection: null,
 				previewIframe: null,
+				runtimeMotion: null,
 				tool: "select",
 				workspaceView: "layers",
 				localTimeSeconds: 0,
@@ -88,6 +94,7 @@ export const useHyperframesStudioStore = create<HyperframesStudioState>()(
 				selectedLayerSelector: selection?.selector ?? null,
 			}),
 		setPreviewIframe: (iframe) => set({ previewIframe: iframe }),
+		setRuntimeMotion: (runtimeMotion) => set({ runtimeMotion }),
 		setTool: (tool) => set({ tool }),
 		setWorkspaceView: (workspaceView) => set({ workspaceView }),
 		setLocalTimeSeconds: (seconds) =>

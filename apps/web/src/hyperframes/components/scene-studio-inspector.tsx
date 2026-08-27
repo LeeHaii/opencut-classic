@@ -16,12 +16,16 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/utils/ui";
 import {
+	addStudioKeyframe,
+	convertStudioAnimationToKeyframes,
 	getStudioAnimationSummary,
 	getStudioLayerAnimations,
+	interpolateStudioKeyframeProperties,
 	moveStudioKeyframe,
 	removeStudioKeyframe,
 	scaleStudioLayerAnimations,
 	shiftStudioLayerAnimations,
+	studioTweenPercentageForClipPercentage,
 	updateStudioKeyframe,
 	type StudioAnimationKeyframe,
 } from "../studio-animations";
@@ -230,6 +234,7 @@ export function SceneStudioInspector() {
 					<MotionInspector
 						html={located.element.html}
 						layer={layer}
+						compositionId={document.compositionId}
 						onCommit={(nextHtml) => commitHtml({ html: nextHtml })}
 					/>
 				)}
@@ -622,22 +627,39 @@ function DesignInspector({
 function MotionInspector({
 	html,
 	layer,
+	compositionId,
 	onCommit,
 }: {
 	html: string;
 	layer: StudioLayer;
+	compositionId: string;
 	onCommit: (html: string) => void;
 }) {
-	const animationData = useMemo(
-		() => getStudioLayerAnimations({ html, layer }),
-		[html, layer],
+	const runtimeMotion = useHyperframesStudioStore(
+		(state) => state.runtimeMotion,
 	);
-	if (animationData.animations.length === 0) {
+	const localTimeSeconds = useHyperframesStudioStore(
+		(state) => state.localTimeSeconds,
+	);
+	const animationData = useMemo(
+		() =>
+			getStudioLayerAnimations({
+				html,
+				layer,
+				runtimeSnapshot:
+					runtimeMotion?.compositionId === compositionId ? runtimeMotion : null,
+			}),
+		[compositionId, html, layer, runtimeMotion],
+	);
+	if (
+		animationData.animations.length === 0 &&
+		animationData.runtimeAnimations.length === 0
+	) {
 		return (
 			<div className="text-muted-foreground px-5 py-10 text-center text-[11px] leading-relaxed">
 				<Diamond className="mx-auto mb-2 size-5 opacity-50" />
-				This layer has no statically editable GSAP animations. Add one in
-				Source, then its keyframes will appear here and on the scene timeline.
+				This layer has no GSAP motion. Add a tween in Source and its timing will
+				appear here and on the scene timeline.
 			</div>
 		);
 	}
@@ -647,6 +669,22 @@ function MotionInspector({
 			<Section title="Animations" icon={<Diamond className="size-3" />}>
 				{animationData.animations.map((animation) => {
 					const summary = getStudioAnimationSummary(animation);
+					const animationKeyframes = animationData.keyframes.filter(
+						(keyframe) => keyframe.animationId === animation.id,
+					);
+					const clipPercentage =
+						((localTimeSeconds - layer.start) / layer.duration) * 100;
+					const playheadPercentage = studioTweenPercentageForClipPercentage({
+						animation,
+						layer,
+						clipPercentage,
+					});
+					const hasKeyAtPlayhead =
+						playheadPercentage != null &&
+						animationKeyframes.some(
+							(keyframe) =>
+								Math.abs(keyframe.percentage - playheadPercentage) < 0.01,
+						);
 					return (
 						<div
 							key={animation.id}
@@ -660,19 +698,84 @@ function MotionInspector({
 									{summary.keyframeCount} keys
 								</span>
 							</div>
-							<p className="text-muted-foreground mt-1 font-mono text-[9px]">
-								{summary.start.toFixed(2)}s · {summary.duration.toFixed(2)}s
-							</p>
+							<div className="mt-1 flex items-center justify-between gap-2">
+								<p className="text-muted-foreground font-mono text-[9px]">
+									{summary.start.toFixed(2)}s · {summary.duration.toFixed(2)}s
+								</p>
+								<div className="flex items-center gap-1">
+									{playheadPercentage != null && (
+										<Button
+											variant="ghost"
+											size="sm"
+											className="h-6 px-2 text-[9px]"
+											disabled={hasKeyAtPlayhead}
+											onClick={() =>
+												void addStudioKeyframe({
+													html,
+													animationId: animation.id,
+													percentage: playheadPercentage,
+													properties: interpolateStudioKeyframeProperties({
+														keyframes: animationKeyframes,
+														percentage: playheadPercentage,
+													}),
+													convertFlat: animation.keyframes == null,
+												}).then(onCommit)
+											}
+										>
+											{hasKeyAtPlayhead ? "Key at playhead" : "Add key"}
+										</Button>
+									)}
+									{!animation.keyframes && summary.keyframeCount > 0 && (
+										<Button
+											variant="ghost"
+											size="sm"
+											className="h-6 px-2 text-[9px]"
+											onClick={() =>
+												void convertStudioAnimationToKeyframes({
+													html,
+													animationId: animation.id,
+												}).then(onCommit)
+											}
+										>
+											Make editable
+										</Button>
+									)}
+								</div>
+							</div>
 						</div>
 					);
 				})}
+				{animationData.runtimeAnimations.map((animation) => (
+					<div
+						key={animation.id}
+						className="border-border/60 bg-muted/20 rounded-md border px-2.5 py-2"
+					>
+						<div className="flex items-center justify-between gap-2">
+							<span className="truncate text-[11px] font-medium capitalize">
+								{animation.propertyGroup}
+							</span>
+							<span className="text-muted-foreground text-[9px]">runtime</span>
+						</div>
+						<p className="text-muted-foreground mt-1 font-mono text-[9px]">
+							{animation.start.toFixed(2)}s · {animation.duration.toFixed(2)}s
+						</p>
+					</div>
+				))}
 			</Section>
+
+			{animationData.diagnostics.map((diagnostic) => (
+				<p
+					key={`${diagnostic.kind}:${diagnostic.message}`}
+					className="border-border/60 bg-muted/20 text-muted-foreground mx-3 mt-3 rounded-md border px-2.5 py-2 text-[10px] leading-relaxed"
+				>
+					{diagnostic.message}
+				</p>
+			))}
 
 			<Section title="Keyframes" icon={<Clock3 className="size-3" />}>
 				{animationData.keyframes.length === 0 ? (
 					<p className="text-muted-foreground text-[10px]">
-						The animations use flat tweens; convert them to keyframes in Source
-						for per-key editing.
+						No interpolated keyframes were discovered for this animation.
 					</p>
 				) : (
 					animationData.keyframes.map((keyframe) => (
@@ -721,6 +824,7 @@ function KeyframeEditor({
 					max={100}
 					step={1}
 					defaultValue={keyframe.percentage.toFixed(1)}
+					disabled={keyframe.editability === "source"}
 					className="w-16 px-2 font-mono text-[9px]"
 					onBlur={(event) => {
 						const nextPercentage = Number(event.currentTarget.value);
@@ -735,6 +839,7 @@ function KeyframeEditor({
 							animationId: keyframe.animationId,
 							fromPercentage: keyframe.percentage,
 							toPercentage: Math.max(0, Math.min(100, nextPercentage)),
+							convertFlat: keyframe.synthesized,
 						}).then(onCommit);
 					}}
 				/>
@@ -743,11 +848,13 @@ function KeyframeEditor({
 					variant="ghost"
 					size="icon"
 					className="text-destructive size-7"
+					disabled={keyframe.editability === "source"}
 					onClick={() =>
 						void removeStudioKeyframe({
 							html,
 							animationId: keyframe.animationId,
 							percentage: keyframe.percentage,
+							convertFlat: keyframe.synthesized,
 						}).then(onCommit)
 					}
 					aria-label="Delete keyframe"
@@ -757,27 +864,38 @@ function KeyframeEditor({
 			</div>
 			{expanded && (
 				<div className="border-border/50 space-y-1.5 border-t px-2 py-2">
-					{Object.entries(keyframe.properties).map(([property, value]) => (
-						<PropertyField
-							key={property}
-							label={property}
-							value={String(value)}
-							onCommit={(nextValue) => {
-								const parsed = Number(nextValue);
-								const nextProperties = {
-									...keyframe.properties,
-									[property]: Number.isFinite(parsed) ? parsed : nextValue,
-								};
-								void updateStudioKeyframe({
-									html,
-									animationId: keyframe.animationId,
-									percentage: keyframe.percentage,
-									properties: nextProperties,
-									ease: keyframe.ease,
-								}).then(onCommit);
-							}}
-						/>
-					))}
+					{Object.entries(keyframe.properties).map(([property, value]) =>
+						keyframe.editability === "source" ? (
+							<div
+								key={property}
+								className="flex items-center justify-between gap-2 text-[10px]"
+							>
+								<span className="text-muted-foreground">{property}</span>
+								<span className="truncate font-mono">{String(value)}</span>
+							</div>
+						) : (
+							<PropertyField
+								key={property}
+								label={property}
+								value={String(value)}
+								onCommit={(nextValue) => {
+									const parsed = Number(nextValue);
+									const nextProperties = {
+										...keyframe.properties,
+										[property]: Number.isFinite(parsed) ? parsed : nextValue,
+									};
+									void updateStudioKeyframe({
+										html,
+										animationId: keyframe.animationId,
+										percentage: keyframe.percentage,
+										properties: nextProperties,
+										ease: keyframe.ease,
+										convertFlat: keyframe.synthesized,
+									}).then(onCommit);
+								}}
+							/>
+						),
+					)}
 				</div>
 			)}
 		</div>

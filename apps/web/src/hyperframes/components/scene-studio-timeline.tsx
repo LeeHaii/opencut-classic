@@ -15,8 +15,12 @@ import { toast } from "sonner";
 import styles from "./scene-studio-timeline.module.css";
 import {
 	buildStudioTimelineKeyframes,
+	moveStudioKeyframe,
+	removeAllStudioKeyframes,
+	removeStudioKeyframe,
 	scaleStudioLayerAnimations,
 	shiftStudioLayerAnimations,
+	studioTweenPercentageForClipPercentage,
 } from "../studio-animations";
 import {
 	applyStudioLayerPatches,
@@ -73,7 +77,7 @@ const STUDIO_TIMELINE_THEME = {
 	shellBackground: "var(--background)",
 	shellBorder: "var(--border)",
 	rulerBorder: "var(--border)",
-	rowBackground: "color-mix(in srgb, var(--background) 96%, var(--foreground))",
+	rowBackground: "var(--background)",
 	rowBorder: "color-mix(in srgb, var(--border) 70%, transparent)",
 	gutterBackground: "var(--background)",
 	gutterBorder: "var(--border)",
@@ -109,6 +113,9 @@ export function SceneStudioTimeline() {
 	const previewIframe = useHyperframesStudioStore(
 		(state) => state.previewIframe,
 	);
+	const runtimeMotion = useHyperframesStudioStore(
+		(state) => state.runtimeMotion,
+	);
 	const exitStudio = useHyperframesStudioStore((state) => state.exit);
 	const selectLayer = useHyperframesStudioStore((state) => state.selectLayer);
 	const setActiveTab = useAssetsPanelStore((state) => state.setActiveTab);
@@ -132,17 +139,35 @@ export function SceneStudioTimeline() {
 		store.setDuration(document.duration);
 		store.setElements(document.layers.map(toTimelineElement));
 		const currentLayerKeys = new Set(document.layers.map((layer) => layer.key));
-		for (const key of store.gsapAnimations.keys()) {
-			if (!currentLayerKeys.has(key)) store.setGsapAnimations(key, undefined);
+		const nextAnimations = new Map(store.gsapAnimations);
+		const nextKeyframes = new Map(store.keyframeCache);
+		for (const key of nextAnimations.keys()) {
+			if (!currentLayerKeys.has(key)) nextAnimations.delete(key);
 		}
-		for (const key of store.keyframeCache.keys()) {
-			if (!currentLayerKeys.has(key)) store.setKeyframeCache(key, undefined);
+		for (const key of nextKeyframes.keys()) {
+			if (!currentLayerKeys.has(key)) nextKeyframes.delete(key);
 		}
 		for (const layer of document.layers) {
-			const keyframes = buildStudioTimelineKeyframes({ html, layer });
-			store.setGsapAnimations(layer.key, keyframes?.animations);
-			store.setKeyframeCache(layer.key, keyframes?.cache);
+			const keyframes = buildStudioTimelineKeyframes({
+				html,
+				layer,
+				runtimeSnapshot:
+					runtimeMotion?.compositionId === document.compositionId
+						? runtimeMotion
+						: null,
+			});
+			if (keyframes?.animations.length) {
+				nextAnimations.set(layer.key, keyframes.animations);
+			} else {
+				nextAnimations.delete(layer.key);
+			}
+			if (keyframes?.cache) nextKeyframes.set(layer.key, keyframes.cache);
+			else nextKeyframes.delete(layer.key);
 		}
+		usePlayerStore.setState({
+			gsapAnimations: nextAnimations,
+			keyframeCache: nextKeyframes,
+		});
 		store.setTimelineReady(true);
 
 		const syncTime = (time: number) => {
@@ -169,7 +194,7 @@ export function SceneStudioTimeline() {
 			unsubscribeSeek();
 			unsubscribePlayback();
 		};
-	}, [document, editor, html, located, sessionEpoch]);
+	}, [document, editor, html, located, runtimeMotion, sessionEpoch]);
 
 	useEffect(() => {
 		const store = usePlayerStore.getState();
@@ -320,6 +345,71 @@ export function SceneStudioTimeline() {
 		[commitMutation, document],
 	);
 
+	const editKeyframe = useCallback(
+		async ({
+			elementId,
+			animationId,
+			fromPercentage,
+			toClipPercentage,
+			remove = false,
+		}: {
+			elementId: string;
+			animationId?: string;
+			fromPercentage: number;
+			toClipPercentage?: number;
+			remove?: boolean;
+		}) => {
+			if (!document || !animationId || animationId.startsWith("runtime:")) {
+				toast.info("Runtime-discovered motion must be edited in Source");
+				return false;
+			}
+			const layer = document.layers.find(
+				(candidate) => candidate.key === elementId,
+			);
+			if (!layer) return false;
+			let changed = false;
+			await commitMutation(async (currentHtml) => {
+				const data = buildStudioTimelineKeyframes({
+					html: currentHtml,
+					layer,
+				});
+				const animation = data?.animations.find(
+					(candidate) => candidate.id === animationId,
+				);
+				if (!animation) return currentHtml;
+				const convertFlat = animation.keyframes == null;
+				const nextHtml = remove
+					? await removeStudioKeyframe({
+							html: currentHtml,
+							animationId,
+							percentage: fromPercentage,
+							convertFlat,
+						})
+					: toClipPercentage == null
+						? currentHtml
+						: await (async () => {
+								const toPercentage = studioTweenPercentageForClipPercentage({
+									animation,
+									layer,
+									clipPercentage: toClipPercentage,
+								});
+								if (toPercentage == null) return currentHtml;
+								return moveStudioKeyframe({
+									html: currentHtml,
+									animationId,
+									fromPercentage,
+									toPercentage,
+									convertFlat,
+								});
+							})();
+				changed = nextHtml !== currentHtml;
+				return nextHtml;
+			});
+			return changed;
+		},
+		[commitMutation, document],
+	);
+
 	if (!located || !document) {
 		return (
 			<div className="panel bg-background text-muted-foreground flex h-full items-center justify-center rounded-sm border text-xs">
@@ -401,6 +491,62 @@ export function SceneStudioTimeline() {
 						resizeElements([{ element, ...updates }])
 					}
 					onResizeElements={(changes) => resizeElements(changes)}
+					onMoveKeyframe={(elementId, keyframe, toClipPercentage) =>
+						editKeyframe({
+							elementId,
+							animationId: keyframe.animationId,
+							fromPercentage: keyframe.tweenPercentage ?? keyframe.percentage,
+							toClipPercentage,
+						})
+					}
+					onDeleteKeyframe={(elementId, keyframe) => {
+						void editKeyframe({
+							elementId,
+							animationId: keyframe.animationId,
+							fromPercentage: keyframe.tweenPercentage ?? keyframe.percentage,
+							remove: true,
+						});
+					}}
+					onMoveKeyframeToPlayhead={(element, keyframe) => {
+						const layer = layerForElement({ layers: document.layers, element });
+						if (!layer) return;
+						const localTime =
+							useHyperframesStudioStore.getState().localTimeSeconds;
+						void editKeyframe({
+							elementId: layer.key,
+							animationId: keyframe.animationId,
+							fromPercentage: keyframe.tweenPercentage ?? keyframe.percentage,
+							toClipPercentage:
+								((localTime - layer.start) / layer.duration) * 100,
+						});
+					}}
+					onDeleteAllKeyframes={(element, animationId) => {
+						const layer = layerForElement({ layers: document.layers, element });
+						if (!layer) return;
+						void commitMutation(async (currentHtml) => {
+							const data = buildStudioTimelineKeyframes({
+								html: currentHtml,
+								layer,
+							});
+							const ids = animationId
+								? [animationId]
+								: (data?.animations.map((animation) => animation.id) ?? []);
+							const flatIds = new Set(
+								(data?.animations ?? [])
+									.filter((animation) => animation.keyframes == null)
+									.map((animation) => animation.id),
+							);
+							let nextHtml = currentHtml;
+							for (const id of ids) {
+								nextHtml = await removeAllStudioKeyframes({
+									html: nextHtml,
+									animationId: id,
+									convertFlat: flatIds.has(id),
+								});
+							}
+							return nextHtml;
+						});
+					}}
 					onDeleteElement={(element) => {
 						const layer = layerForElement({
 							layers: document.layers,
