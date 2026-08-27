@@ -1,5 +1,4 @@
 import type { EditorCore } from "@/core";
-import { readVideoFile } from "@/media/mediabunny";
 import type { StockCandidate } from "../types";
 
 const MAX_DOWNLOAD_BYTES = 500 * 1024 * 1024;
@@ -9,18 +8,21 @@ export interface AcquiredMedia {
 	candidate: StockCandidate;
 }
 
+export interface StartedMediaAcquisition {
+	mediaId: string;
+	acquisition: Promise<AcquiredMedia>;
+}
+
 function fileNameFor({ candidate }: { candidate: StockCandidate }): string {
 	const extension = candidate.kind === "video" ? "mp4" : "jpg";
 	const label = candidate.id.split(":").pop() ?? "asset";
 	return `rhymx-${label}.${extension}`;
 }
 
-/**
- * Downloads a stock candidate into the project media library.
- * Deduplicated by candidate id via the returned cache.
- */
+/** Downloads a stock candidate into the project media library on demand. */
 export class MediaAcquirer {
 	private acquired = new Map<string, AcquiredMedia>();
+	private acquiring = new Map<string, StartedMediaAcquisition>();
 
 	getCached({ candidateId }: { candidateId: string }): AcquiredMedia | null {
 		return this.acquired.get(candidateId) ?? null;
@@ -35,11 +37,74 @@ export class MediaAcquirer {
 		candidate: StockCandidate;
 		signal?: AbortSignal;
 	}): Promise<AcquiredMedia> {
+		return this.startAcquisition({ editor, candidate, signal }).acquisition;
+	}
+
+	startAcquisition({
+		editor,
+		candidate,
+		signal,
+	}: {
+		editor: EditorCore;
+		candidate: StockCandidate;
+		signal?: AbortSignal;
+	}): StartedMediaAcquisition {
 		const cached = this.getCached({ candidateId: candidate.id });
 		if (cached) {
-			return cached;
+			return { mediaId: cached.mediaId, acquisition: Promise.resolve(cached) };
+		}
+		const pending = this.acquiring.get(candidate.id);
+		if (pending) {
+			return pending;
 		}
 
+		const pendingAsset = editor.media.addPendingMediaAsset({
+			asset: {
+				name: `${candidate.provider} · ${fileNameFor({ candidate })}`,
+				type: candidate.kind,
+				thumbnailUrl:
+					candidate.thumbnailUrl ??
+					(candidate.kind === "image" ? candidate.previewUrl : undefined),
+				width: candidate.width,
+				height: candidate.height,
+				duration: candidate.durationSec,
+			},
+		});
+		const started: StartedMediaAcquisition = {
+			mediaId: pendingAsset.id,
+			acquisition: Promise.resolve({
+				mediaId: pendingAsset.id,
+				candidate,
+			}),
+		};
+		started.acquisition = this.download({
+			editor,
+			candidate,
+			mediaId: pendingAsset.id,
+			signal,
+		})
+			.catch((error: unknown) => {
+				editor.media.markMediaAssetDownloadFailed({ id: pendingAsset.id });
+				throw error;
+			})
+			.finally(() => {
+				this.acquiring.delete(candidate.id);
+			});
+		this.acquiring.set(candidate.id, started);
+		return started;
+	}
+
+	private async download({
+		editor,
+		candidate,
+		mediaId,
+		signal,
+	}: {
+		editor: EditorCore;
+		candidate: StockCandidate;
+		mediaId: string;
+		signal?: AbortSignal;
+	}): Promise<AcquiredMedia> {
 		let response: Response;
 		try {
 			response = await fetch(candidate.sourceUrl, { signal });
@@ -60,6 +125,9 @@ export class MediaAcquirer {
 		}
 
 		const blob = await response.blob();
+		if (blob.size > MAX_DOWNLOAD_BYTES) {
+			throw new Error("File exceeds the 500 MB download limit");
+		}
 		const file = new File([blob], fileNameFor({ candidate }), {
 			type:
 				blob.type || (candidate.kind === "video" ? "video/mp4" : "image/jpeg"),
@@ -67,46 +135,21 @@ export class MediaAcquirer {
 		});
 
 		const url = URL.createObjectURL(file);
-		let thumbnailUrl: string | undefined;
-		let width = candidate.width;
-		let height = candidate.height;
-		let duration = candidate.durationSec;
-		let fps: number | undefined;
-		let hasAudio: boolean | undefined;
 
-		if (candidate.kind === "video") {
-			// Match the regular import path: probe the file for a real poster
-			// frame and playback metadata so the preview/timeline can render it.
-			try {
-				const videoData = await readVideoFile({ file });
-				thumbnailUrl = videoData.thumbnailUrl ?? undefined;
-				width = videoData.width || width;
-				height = videoData.height || height;
-				duration = videoData.duration || duration;
-				fps = Number.isFinite(videoData.fps)
-					? Math.round(videoData.fps)
-					: undefined;
-				hasAudio = videoData.hasAudio;
-			} catch {
-				// Keep API-provided metadata; the asset still plays via url.
-			}
-		} else {
-			thumbnailUrl = url;
-		}
-
-		const asset = await editor.media.addMediaAsset({
+		const asset = await editor.media.finalizePendingMediaAsset({
 			projectId: editor.project.getActive().metadata.id,
+			id: mediaId,
 			asset: {
 				name: `${candidate.provider} · ${fileNameFor({ candidate })}`,
-				type: candidate.kind === "video" ? "video" : "image",
+				type: candidate.kind,
 				file,
 				url,
-				thumbnailUrl,
-				width,
-				height,
-				duration,
-				fps,
-				hasAudio,
+				thumbnailUrl:
+					candidate.thumbnailUrl ??
+					(candidate.kind === "image" ? url : undefined),
+				width: candidate.width,
+				height: candidate.height,
+				duration: candidate.durationSec,
 			},
 		});
 		if (!asset) {
@@ -114,7 +157,7 @@ export class MediaAcquirer {
 			throw new Error("Could not save downloaded media to the project");
 		}
 
-		const acquired: AcquiredMedia = { mediaId: asset.id, candidate };
+		const acquired: AcquiredMedia = { mediaId, candidate };
 		this.acquired.set(candidate.id, acquired);
 		return acquired;
 	}

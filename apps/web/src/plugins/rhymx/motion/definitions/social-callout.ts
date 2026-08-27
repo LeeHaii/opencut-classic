@@ -1,6 +1,11 @@
 import type { ParamDefinition } from "@/params";
 import type { GraphicDefinition, GraphicRenderContext } from "@/graphics";
-import { entranceProgress, exitFactor, staggeredProgress, clamp01 } from "../animation";
+import {
+	entranceProgress,
+	exitFactor,
+	staggeredProgress,
+	clamp01,
+} from "../animation";
 import {
 	accent,
 	drawGlassCard,
@@ -22,11 +27,23 @@ interface SocialCalloutParams {
 
 const SOCIAL_PARAMS: ParamDefinition<keyof SocialCalloutParams & string>[] = [
 	{ key: "handle", label: "Handle", type: "text", default: "@rhymx.studio" },
-	{ key: "message", label: "Message", type: "text", default: "Follow for part two" },
+	{
+		key: "message",
+		label: "Message",
+		type: "text",
+		default: "Follow for part two",
+	},
 	{ key: "accentColor", label: "Accent", type: "color", default: "#e879f9" },
 ];
 
-function renderSocialCallout({ ctx, params, width, height, localTime = 0, durationSec = 4 }: GraphicRenderContext): void {
+function renderSocialCallout({
+	ctx,
+	params,
+	width,
+	height,
+	localTime = 0,
+	durationSec = 4,
+}: GraphicRenderContext): void {
 	ctx.clearRect(0, 0, width, height);
 	const cardEnter = entranceProgress({ localTime });
 	const textEnter = staggeredProgress({ localTime, index: 1 });
@@ -41,12 +58,25 @@ function renderSocialCallout({ ctx, params, width, height, localTime = 0, durati
 	const cardHeight = height * 0.3;
 	const cardX = width / 2 - cardWidth / 2 + 26 * (1 - cardEnter);
 	const cardY = height * 0.62 - cardHeight / 2;
-	drawGlassCard({ ctx, x: cardX, y: cardY, width: cardWidth, height: cardHeight, radius: 24 });
+	drawGlassCard({
+		ctx,
+		x: cardX,
+		y: cardY,
+		width: cardWidth,
+		height: cardHeight,
+		radius: 24,
+	});
 
 	ctx.fillStyle = color;
 	ctx.globalAlpha = exit * clamp01({ value: 0.55 + pulse * 0.45 }) * cardEnter;
 	ctx.beginPath();
-	ctx.arc(cardX + 52, cardY + 52, height * 0.02 + pulse * height * 0.006, 0, Math.PI * 2);
+	ctx.arc(
+		cardX + 52,
+		cardY + 52,
+		height * 0.02 + pulse * height * 0.006,
+		0,
+		Math.PI * 2,
+	);
 	ctx.fill();
 
 	ctx.globalAlpha = exit * textEnter;
@@ -62,7 +92,11 @@ function renderSocialCallout({ ctx, params, width, height, localTime = 0, durati
 		maxWidth: cardWidth - 80,
 	});
 	lines.forEach((line, index) => {
-		ctx.fillText(line, cardX + 40, cardY + cardHeight * 0.62 + index * height * 0.06);
+		ctx.fillText(
+			line,
+			cardX + 40,
+			cardY + cardHeight * 0.62 + index * height * 0.06,
+		);
 	});
 	ctx.restore();
 }

@@ -46,6 +46,9 @@
 		"typescript": "^6.0.2",
 		"typescript-eslint": "^8.59.0"
 	},
+	"patchedDependencies": {
+		"@hyperframes/studio@0.8.14": "patches/@hyperframes%2Fstudio@0.8.14.patch"
+	},
 	"trustedDependencies": [
 		"@tailwindcss/oxide"
 	]

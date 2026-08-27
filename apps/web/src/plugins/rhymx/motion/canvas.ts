@@ -53,7 +53,13 @@ export function numberParam({
 	return fallback;
 }
 
-export function withAlpha({ hex, alpha }: { hex: string; alpha: number }): string {
+export function withAlpha({
+	hex,
+	alpha,
+}: {
+	hex: string;
+	alpha: number;
+}): string {
 	const parsed = parseHex(hex);
 	return `rgba(${parsed.r}, ${parsed.g}, ${parsed.b}, ${Math.min(1, Math.max(0, alpha))})`;
 }

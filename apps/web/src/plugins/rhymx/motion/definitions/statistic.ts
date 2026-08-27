@@ -24,11 +24,23 @@ interface StatisticParams {
 const STATISTIC_PARAMS: ParamDefinition<keyof StatisticParams & string>[] = [
 	{ key: "value", label: "Value", type: "text", default: "87" },
 	{ key: "suffix", label: "Suffix", type: "text", default: "%" },
-	{ key: "label", label: "Label", type: "text", default: "of viewers finish the video" },
+	{
+		key: "label",
+		label: "Label",
+		type: "text",
+		default: "of viewers finish the video",
+	},
 	{ key: "accentColor", label: "Accent", type: "color", default: "#f59e0b" },
 ];
 
-function renderStatistic({ ctx, params, width, height, localTime = 0, durationSec = 4 }: GraphicRenderContext): void {
+function renderStatistic({
+	ctx,
+	params,
+	width,
+	height,
+	localTime = 0,
+	durationSec = 4,
+}: GraphicRenderContext): void {
 	ctx.clearRect(0, 0, width, height);
 	const enter = entranceProgress({ localTime });
 	const exit = exitFactor({ localTime, durationSec });

@@ -1,11 +1,17 @@
 import { create } from "zustand";
-import type { CaptionMode, PlanScene, RhymxApiKeys } from "../types";
+import type {
+	CaptionMode,
+	PlanScene,
+	RhymxApiKeys,
+	StockCandidate,
+} from "../types";
 import { loadApiKeys, saveApiKey } from "../settings";
 
 export type RhymxWizardStep =
 	| "idle"
 	| "transcribing"
 	| "planning"
+	| "generating"
 	| "reviewing"
 	| "matching"
 	| "applying";
@@ -23,6 +29,8 @@ interface RhymxStore {
 	captionMode: CaptionMode;
 	/** ISO-639-1 transcription hint; empty string = auto-detect. */
 	language: string;
+	/** Stock candidate currently previewed on the main preview screen. */
+	previewCandidate: StockCandidate | null;
 
 	setStep: ({ step }: { step: RhymxWizardStep }) => void;
 	setError: ({ error }: { error: string | null }) => void;
@@ -38,10 +46,21 @@ interface RhymxStore {
 	}) => void;
 	setFullNarration: ({ narration }: { narration: string }) => void;
 	reloadKeys: () => void;
-	updateKey: ({ key, value }: { key: keyof RhymxApiKeys; value: string }) => void;
+	updateKey: ({
+		key,
+		value,
+	}: {
+		key: keyof RhymxApiKeys;
+		value: string;
+	}) => void;
 	setIncludeCaptions: ({ value }: { value: boolean }) => void;
 	setCaptionMode: ({ mode }: { mode: CaptionMode }) => void;
 	setLanguage: ({ language }: { language: string }) => void;
+	setPreviewCandidate: ({
+		candidate,
+	}: {
+		candidate: StockCandidate | null;
+	}) => void;
 	reset: () => void;
 }
 
@@ -59,6 +78,7 @@ export const useRhymxStore = create<RhymxStore>()((set) => ({
 	includeCaptions: true,
 	captionMode: "phrase",
 	language: "",
+	previewCandidate: null,
 
 	setStep: ({ step }) => set({ step }),
 	setError: ({ error }) =>
@@ -69,7 +89,8 @@ export const useRhymxStore = create<RhymxStore>()((set) => ({
 				? { statusMessage: message, error: null }
 				: { statusMessage: null },
 		),
-	setProgress: ({ done, total }) => set({ progressDone: done, progressTotal: total }),
+	setProgress: ({ done, total }) =>
+		set({ progressDone: done, progressTotal: total }),
 	setScenes: ({ scenes }) => set({ scenes }),
 	updateScene: ({ sceneId, patch }) =>
 		set((state) => ({
@@ -86,6 +107,7 @@ export const useRhymxStore = create<RhymxStore>()((set) => ({
 	setIncludeCaptions: ({ value }) => set({ includeCaptions: value }),
 	setCaptionMode: ({ mode }) => set({ captionMode: mode }),
 	setLanguage: ({ language }) => set({ language }),
+	setPreviewCandidate: ({ candidate }) => set({ previewCandidate: candidate }),
 	reset: () =>
 		set({
 			step: "idle",
@@ -95,5 +117,6 @@ export const useRhymxStore = create<RhymxStore>()((set) => ({
 			progressTotal: 0,
 			scenes: [],
 			fullNarration: "",
+			previewCandidate: null,
 		}),
 }));

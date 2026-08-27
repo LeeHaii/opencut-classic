@@ -116,6 +116,84 @@ export function extractErrorMessage(data: unknown): string | null {
 	return typeof message === "string" && message.length > 0 ? message : null;
 }
 
+interface GroqErrorInfo {
+	message: string | null;
+	code: string | null;
+	/** Raw model output that failed JSON validation (Groq-specific). */
+	failedGeneration: string | null;
+}
+
+function extractGroqError(data: unknown): GroqErrorInfo {
+	const error = isRecord(data) ? data.error : undefined;
+	if (!isRecord(error)) {
+		return { message: null, code: null, failedGeneration: null };
+	}
+	return {
+		message: typeof error.message === "string" ? error.message : null,
+		code: typeof error.code === "string" ? error.code : null,
+		failedGeneration:
+			typeof error.failed_generation === "string"
+				? error.failed_generation
+				: null,
+	};
+}
+
+/**
+ * Pulls the first balanced JSON object or array out of arbitrary model output,
+ * tolerating markdown fences and surrounding prose. Returns null when no
+ * parseable JSON payload is present.
+ */
+export function extractJsonPayload(text: string): string | null {
+	const fence = text.match(/```(?:json)?\s*([\s\S]*?)```/i);
+	for (const candidate of [fence?.[1], text]) {
+		if (!candidate) continue;
+		const payload = scanBalancedJson(candidate.trim());
+		if (payload !== null) return payload;
+	}
+	return null;
+}
+
+function scanBalancedJson(text: string): string | null {
+	const start = text.search(/[{[]/);
+	if (start < 0) return null;
+	let depth = 0;
+	let inString = false;
+	let escaped = false;
+	for (let index = start; index < text.length; index++) {
+		const char = text[index];
+		if (inString) {
+			if (escaped) {
+				escaped = false;
+			} else if (char === "\\") {
+				escaped = true;
+			} else if (char === '"') {
+				inString = false;
+			}
+			continue;
+		}
+		if (char === '"') {
+			inString = true;
+		} else if (char === "{" || char === "[") {
+			depth += 1;
+		} else if (char === "}" || char === "]") {
+			depth -= 1;
+			if (depth === 0) {
+				const slice = text.slice(start, index + 1);
+				try {
+					JSON.parse(slice);
+					return slice;
+				} catch {
+					return null;
+				}
+			}
+		}
+	}
+	return null;
+}
+
+const BARE_JSON_SUFFIX =
+	"\n\nIMPORTANT: Reply with ONLY the raw JSON object itself — no markdown code fences, no explanations, no reasoning, no text before or after the JSON.";
+
 /** JSON-mode chat completion against Groq. */
 async function groqChat({
 	apiKey,
@@ -127,11 +205,13 @@ async function groqChat({
 	signal,
 	jsonMode,
 	allowModelFallback = true,
+	allowJsonRecovery = true,
 }: GroqChatOptions & {
 	model: string;
 	temperature: number;
 	jsonMode: boolean;
 	allowModelFallback?: boolean;
+	allowJsonRecovery?: boolean;
 }): Promise<string> {
 	const response = await fetch(GROQ_CHAT_URL, {
 		method: "POST",
@@ -156,10 +236,13 @@ async function groqChat({
 
 	const data: unknown = await response.json();
 	if (!response.ok) {
-		const message = extractErrorMessage(data);
+		const info = extractGroqError(data);
 		if (
 			allowModelFallback &&
-			isUnavailableModelError({ status: response.status, message })
+			isUnavailableModelError({
+				status: response.status,
+				message: info.message,
+			})
 		) {
 			const fallback = await discoverGroqChatModel({
 				apiKey,
@@ -179,13 +262,52 @@ async function groqChat({
 				});
 			}
 		}
-		throw new Error(message ?? `Groq request failed (${response.status})`);
+		if (
+			allowJsonRecovery &&
+			jsonMode &&
+			response.status === 400 &&
+			isJsonValidationError(info)
+		) {
+			// Free recovery: Groq returns the raw generation that failed
+			// validation — salvage it when it actually contains JSON.
+			if (info.failedGeneration) {
+				const salvaged = extractJsonPayload(info.failedGeneration);
+				if (salvaged) return salvaged;
+			}
+			// Otherwise retry once without strict JSON mode and parse locally.
+			const retried = await groqChat({
+				apiKey,
+				model,
+				systemPrompt,
+				userMessage: `${userMessage}${BARE_JSON_SUFFIX}`,
+				temperature,
+				signal,
+				jsonMode: false,
+				allowModelFallback: false,
+				allowJsonRecovery: false,
+			});
+			const recovered = extractJsonPayload(retried);
+			if (recovered) return recovered;
+			throw new Error(
+				"The AI planner returned malformed JSON twice. Try again — shorter narration usually helps.",
+			);
+		}
+		throw new Error(info.message ?? `Groq request failed (${response.status})`);
 	}
 	const content = extractChatContent(data);
 	if (!content) {
 		throw new Error("Groq returned an empty completion");
 	}
 	return content;
+}
+
+function isJsonValidationError(info: GroqErrorInfo): boolean {
+	if (info.code === "json_validate_failed") return true;
+	const message = (info.message ?? "").toLowerCase();
+	return (
+		message.includes("failed to validate json") ||
+		message.includes("failed_generation")
+	);
 }
 
 /** JSON-mode chat completion against Groq with model discovery fallback. */
@@ -220,9 +342,10 @@ export async function groqChatText({
 }: GroqChatOptions): Promise<string> {
 	return groqChat({
 		apiKey,
-		model: images && images.length > 0 && model === GROQ_PLANNER_MODEL
-			? GROQ_VISION_MODEL
-			: model,
+		model:
+			images && images.length > 0 && model === GROQ_PLANNER_MODEL
+				? GROQ_VISION_MODEL
+				: model,
 		systemPrompt,
 		userMessage,
 		images,

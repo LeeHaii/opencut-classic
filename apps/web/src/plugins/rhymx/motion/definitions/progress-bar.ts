@@ -22,12 +22,27 @@ interface ProgressBarParams {
 }
 
 const PROGRESS_PARAMS: ParamDefinition<keyof ProgressBarParams & string>[] = [
-	{ key: "percent", label: "Percent", type: "number", default: 72, min: 0, max: 100, step: 1 },
+	{
+		key: "percent",
+		label: "Percent",
+		type: "number",
+		default: 72,
+		min: 0,
+		max: 100,
+		step: 1,
+	},
 	{ key: "label", label: "Label", type: "text", default: "Project complete" },
 	{ key: "accentColor", label: "Accent", type: "color", default: "#34d399" },
 ];
 
-function renderProgressBar({ ctx, params, width, height, localTime = 0, durationSec = 4 }: GraphicRenderContext): void {
+function renderProgressBar({
+	ctx,
+	params,
+	width,
+	height,
+	localTime = 0,
+	durationSec = 4,
+}: GraphicRenderContext): void {
 	ctx.clearRect(0, 0, width, height);
 	const enter = entranceProgress({ localTime });
 	const exit = exitFactor({ localTime, durationSec });
@@ -51,7 +66,15 @@ function renderProgressBar({ ctx, params, width, height, localTime = 0, duration
 	const barWidth = width * 0.6;
 	const barHeight = height * 0.035;
 	ctx.fillStyle = withAlpha({ hex: "#94a3b8", alpha: 0.25 });
-	ctx.fill(roundRectPath({ x: width * 0.2, y: barY, width: barWidth, height: barHeight, radius: barHeight / 2 }));
+	ctx.fill(
+		roundRectPath({
+			x: width * 0.2,
+			y: barY,
+			width: barWidth,
+			height: barHeight,
+			radius: barHeight / 2,
+		}),
+	);
 	ctx.fillStyle = color;
 	const fillRatio = clamp01({ value: (percent / 100) * enter });
 	ctx.fill(

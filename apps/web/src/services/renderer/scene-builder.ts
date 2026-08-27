@@ -62,7 +62,14 @@ function buildTrackNodes({
 
 			if (element.type === "video" || element.type === "image") {
 				const mediaAsset = mediaMap.get(element.mediaId);
-				if (!mediaAsset?.file || !mediaAsset?.url) {
+				const remoteUrl = mediaAsset?.remoteUrl;
+				const hasLocalMedia = Boolean(mediaAsset?.file && mediaAsset?.url);
+				const hasRemoteMedia = Boolean(remoteUrl);
+				if (!mediaAsset || (!hasLocalMedia && !hasRemoteMedia)) {
+					continue;
+				}
+				const displayUrl = mediaAsset.url ?? remoteUrl;
+				if (!displayUrl) {
 					continue;
 				}
 
@@ -70,8 +77,9 @@ function buildTrackNodes({
 					nodes.push(
 						new VideoNode({
 							mediaId: mediaAsset.id,
-							url: mediaAsset.url,
+							url: displayUrl,
 							file: mediaAsset.file,
+							remoteUrl,
 							duration: element.duration,
 							timeOffset: element.startTime,
 							trimStart: element.trimStart,
@@ -86,7 +94,11 @@ function buildTrackNodes({
 						}),
 					);
 				}
-				if (element.type === "image" && mediaAsset.type === "image") {
+				if (
+					element.type === "image" &&
+					mediaAsset.type === "image" &&
+					mediaAsset.url
+				) {
 					nodes.push(
 						new ImageNode({
 							url: mediaAsset.url,
@@ -232,19 +244,27 @@ function buildBlurBackgroundNodes({
 		}
 
 		const mediaAsset = mediaMap.get(element.mediaId);
+		const remoteUrl = mediaAsset?.remoteUrl;
+		const hasLocalMedia = Boolean(mediaAsset?.file && mediaAsset?.url);
+		const hasRemoteMedia = Boolean(remoteUrl);
 		if (
-			!mediaAsset?.file ||
-			!mediaAsset?.url ||
+			!mediaAsset ||
+			(!hasLocalMedia && !hasRemoteMedia) ||
 			(mediaAsset.type !== "video" && mediaAsset.type !== "image")
 		) {
+			continue;
+		}
+		const displayUrl = mediaAsset.url ?? remoteUrl;
+		if (!displayUrl) {
 			continue;
 		}
 
 		nodes.push(
 			new BlurBackgroundNode({
 				mediaId: mediaAsset.id,
-				url: mediaAsset.url,
+				url: displayUrl,
 				file: mediaAsset.file,
+				remoteUrl,
 				mediaType: mediaAsset.type,
 				duration: element.duration,
 				timeOffset: element.startTime,

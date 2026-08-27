@@ -1,7 +1,13 @@
 "use client";
 
 import { Plus } from "lucide-react";
-import { type ReactNode, useEffect, useRef, useState } from "react";
+import {
+	type ReactNode,
+	useCallback,
+	useEffect,
+	useRef,
+	useState,
+} from "react";
 import { createPortal } from "react-dom";
 import { AspectRatio } from "@/components/ui/aspect-ratio";
 import { Button } from "@/components/ui/button";
@@ -12,6 +18,7 @@ import {
 } from "@/components/ui/tooltip";
 import { useEditor } from "@/editor/use-editor";
 import type { TimelineDragData } from "@/timeline/drag";
+import type { TimelineDragDataResolver } from "@/timeline/drag-source";
 import { cn } from "@/utils/ui";
 import type { MediaTime } from "@/wasm";
 
@@ -19,8 +26,10 @@ export interface DraggableItemProps {
 	name: string;
 	preview: ReactNode;
 	dragData: TimelineDragData;
+	resolveDragData?: TimelineDragDataResolver;
 	onDragStart?: ({ e }: { e: React.DragEvent }) => void;
 	onAddToTimeline?: ({ currentTime }: { currentTime: MediaTime }) => void;
+	onPreview?: () => void;
 	aspectRatio?: number;
 	className?: string;
 	containerClassName?: string;
@@ -35,8 +44,10 @@ export function DraggableItem({
 	name,
 	preview,
 	dragData,
+	resolveDragData,
 	onDragStart,
 	onAddToTimeline,
+	onPreview,
 	aspectRatio = 16 / 9,
 	className = "",
 	containerClassName,
@@ -50,6 +61,10 @@ export function DraggableItem({
 	const [dragPosition, setDragPosition] = useState({ x: 0, y: 0 });
 	const dragRef = useRef<HTMLDivElement>(null);
 	const editor = useEditor();
+	const finishDrag = useCallback(() => {
+		setIsDragging(false);
+		editor.timeline.dragSource.end();
+	}, [editor]);
 
 	const handleAddToTimeline = () => {
 		onAddToTimeline?.({ currentTime: editor.playback.getCurrentTime() });
@@ -67,11 +82,17 @@ export function DraggableItem({
 		};
 
 		document.addEventListener("dragover", handleDragOver);
+		window.addEventListener("dragend", finishDrag, true);
+		window.addEventListener("drop", finishDrag);
+		window.addEventListener("blur", finishDrag);
 
 		return () => {
 			document.removeEventListener("dragover", handleDragOver);
+			window.removeEventListener("dragend", finishDrag, true);
+			window.removeEventListener("drop", finishDrag);
+			window.removeEventListener("blur", finishDrag);
 		};
-	}, [isDragging]);
+	}, [finishDrag, isDragging]);
 
 	const handleDragStart = (event: React.DragEvent) => {
 		event.dataTransfer.setDragImage(emptyImg, 0, 0);
@@ -79,17 +100,13 @@ export function DraggableItem({
 		editor.timeline.dragSource.begin({
 			dataTransfer: event.dataTransfer,
 			dragData,
+			resolveDragData,
 		});
 
 		setDragPosition({ x: event.clientX, y: event.clientY });
 		setIsDragging(true);
 
 		onDragStart?.({ e: event });
-	};
-
-	const handleDragEnd = () => {
-		setIsDragging(false);
-		editor.timeline.dragSource.end();
 	};
 
 	return (
@@ -112,9 +129,18 @@ export function DraggableItem({
 								isRounded && "rounded-sm",
 								isDraggable && "[&::-webkit-drag-ghost]:opacity-0",
 							)}
+							role={onPreview ? "button" : undefined}
+							tabIndex={onPreview ? 0 : undefined}
 							draggable={isDraggable}
+							onClick={onPreview}
+							onKeyDown={(event) => {
+								if (onPreview && (event.key === "Enter" || event.key === " ")) {
+									event.preventDefault();
+									onPreview();
+								}
+							}}
 							onDragStart={isDraggable ? handleDragStart : undefined}
-							onDragEnd={isDraggable ? handleDragEnd : undefined}
+							onDragEnd={isDraggable ? finishDrag : undefined}
 						>
 							{preview}
 							{!isDragging && (
@@ -153,7 +179,7 @@ export function DraggableItem({
 						)}
 						draggable={isDraggable}
 						onDragStart={isDraggable ? handleDragStart : undefined}
-						onDragEnd={isDraggable ? handleDragEnd : undefined}
+						onDragEnd={isDraggable ? finishDrag : undefined}
 					>
 						<div className="size-6 shrink-0 overflow-hidden rounded-sm">
 							{preview}

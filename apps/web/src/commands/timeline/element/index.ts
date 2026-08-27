@@ -3,6 +3,7 @@ export { DeleteElementsCommand } from "./delete-elements";
 export { DuplicateElementsCommand } from "./duplicate-elements";
 export { SplitElementsCommand } from "./split-elements";
 export { UpdateElementsCommand } from "./update-elements";
+export { ReplaceMediaCommand } from "./replace-media";
 export { ToggleSourceAudioSeparationCommand } from "./toggle-source-audio-separation";
 export { MoveElementCommand } from "./move-elements";
 

@@ -8,7 +8,13 @@ export {
 	MIN_ANTIGRAVITY_VERSION,
 } from "./models";
 export { buildAgentPrompt, buildSeedComposition } from "./prompt";
-export { extractHtml, quickValidate } from "./extract";
+export {
+	buildMotionDesignSkills,
+	deriveStyleDirection,
+	type StyleDirection,
+} from "./design-skills";
+export { extractHtml, quickValidate, auditCompositionAnimation } from "./extract";
+export type { CompositionInfo } from "./extract";
 export {
 	isNative,
 	nativeInvoke,

@@ -298,20 +298,26 @@ class StorageService {
 			id: mediaAsset.id,
 			name: mediaAsset.name,
 			type: mediaAsset.type,
-			size: mediaAsset.file.size,
-			lastModified: mediaAsset.file.lastModified,
+			size: mediaAsset.file?.size ?? 0,
+			lastModified: mediaAsset.file?.lastModified ?? Date.now(),
 			width: mediaAsset.width,
 			height: mediaAsset.height,
 			duration: mediaAsset.duration,
+			fps: mediaAsset.fps,
+			hasAudio: mediaAsset.hasAudio,
 			thumbnailUrl: mediaAsset.thumbnailUrl,
 			ephemeral: mediaAsset.ephemeral,
+			remoteUrl: mediaAsset.remoteUrl,
 		};
 
 		try {
-			await mediaAssetsAdapter.set({
-				key: mediaAsset.id,
-				value: mediaAsset.file,
-			});
+			// Remote (streamed) assets have no local bytes to persist yet.
+			if (mediaAsset.file) {
+				await mediaAssetsAdapter.set({
+					key: mediaAsset.id,
+					value: mediaAsset.file,
+				});
+			}
 			await mediaMetadataAdapter.set({
 				key: mediaAsset.id,
 				value: metadata,
@@ -325,7 +331,7 @@ class StorageService {
 
 			if (this.isQuotaExceededError({ error })) {
 				throw new StorageQuotaExceededError({
-					requiredBytes: mediaAsset.file.size,
+					requiredBytes: mediaAsset.file?.size ?? 0,
 				});
 			}
 
@@ -348,7 +354,24 @@ class StorageService {
 			mediaMetadataAdapter.get(id),
 		]);
 
-		if (!file || !metadata) return null;
+		if (!metadata) return null;
+		if (!file) {
+			// Remote (streamed) asset: no local bytes stored.
+			if (!metadata.remoteUrl) return null;
+			return {
+				id: metadata.id,
+				name: metadata.name,
+				type: metadata.type,
+				width: metadata.width,
+				height: metadata.height,
+				duration: metadata.duration,
+				fps: metadata.fps,
+				hasAudio: metadata.hasAudio,
+				thumbnailUrl: metadata.thumbnailUrl,
+				ephemeral: metadata.ephemeral,
+				remoteUrl: metadata.remoteUrl,
+			};
+		}
 
 		let url: string;
 		if (metadata.type === "image" && (!file.type || file.type === "")) {
@@ -376,8 +399,11 @@ class StorageService {
 			width: metadata.width,
 			height: metadata.height,
 			duration: metadata.duration,
+			fps: metadata.fps,
+			hasAudio: metadata.hasAudio,
 			thumbnailUrl: metadata.thumbnailUrl,
 			ephemeral: metadata.ephemeral,
+			remoteUrl: metadata.remoteUrl,
 		};
 	}
 

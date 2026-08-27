@@ -1,6 +1,8 @@
 "use client";
 
 import { createContext, useContext } from "react";
+import { Replace } from "lucide-react";
+import { Spinner } from "@/components/ui/spinner";
 import { useEditor } from "@/editor/use-editor";
 import { useAssetsPanelStore } from "@/components/editor/panels/assets/assets-panel-store";
 import { AudioWaveform, WAVEFORM_GAIN_SAMPLE_COUNT } from "./audio-waveform";
@@ -79,6 +81,7 @@ import {
 	KeyframeIcon,
 	MagicWand05Icon,
 	HtmlFiveIcon,
+	Layers01Icon,
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { uppercase } from "@/utils/string";
@@ -88,6 +91,7 @@ import { cn } from "@/utils/ui";
 import { usePropertiesStore } from "@/components/editor/panels/properties/stores/properties-store";
 import { getTrackTypeForElementType } from "@/timeline/placement/compatibility";
 import { useTimelineStore } from "@/timeline/timeline-store";
+import { useHyperframesStudioStore } from "@/hyperframes/studio-store";
 import { KEYFRAME_LANE_HEIGHT_PX } from "./layout";
 import {
 	getExpandedRows,
@@ -311,6 +315,7 @@ export function TimelineElement({
 	const toggleElementExpanded = useTimelineStore(
 		(s) => s.toggleElementExpanded,
 	);
+	const editor = useEditor();
 	const expandedRows = useMemo(
 		() =>
 			isExpanded ? getExpandedRows({ animations: element.animations }) : [],
@@ -503,6 +508,21 @@ export function TimelineElement({
 							</ContextMenuItem>
 						</>
 					)}
+					{element.type === "hyperframes" && (
+						<ContextMenuItem
+							icon={<HugeiconsIcon icon={Layers01Icon} />}
+							onClick={(event: React.MouseEvent) => {
+								event.stopPropagation();
+								useHyperframesStudioStore
+									.getState()
+									.enter({ elementId: element.id });
+								useAssetsPanelStore.getState().setActiveTab("studio");
+								editor.playback.seek({ time: element.startTime });
+							}}
+						>
+							Edit in Studio
+						</ContextMenuItem>
+					)}
 					<ContextMenuSeparator />
 					<DeleteMenuItem
 						isMultipleSelected={selectedElements.length > 1}
@@ -554,8 +574,7 @@ function ElementInner({
 }) {
 	const visibleElement = displayElement ?? element;
 	const isReducedOpacity =
-		(canElementBeHidden(visibleElement) && visibleElement.hidden) ||
-		isDropTarget;
+		canElementBeHidden(visibleElement) && visibleElement.hidden;
 	return (
 		<div
 			className="absolute top-0 bottom-0"
@@ -567,13 +586,23 @@ function ElementInner({
 			<div
 				className="absolute inset-0 rounded-sm"
 				style={
-					isSelected
+					isDropTarget
 						? {
-								boxShadow: `0 0 0 ${ELEMENT_RING_WIDTH_PX}px var(--primary)`,
+								boxShadow: `0 0 0 ${ELEMENT_RING_WIDTH_PX}px #10b981`,
 							}
-						: undefined
+						: isSelected
+							? {
+									boxShadow: `0 0 0 ${ELEMENT_RING_WIDTH_PX}px var(--primary)`,
+								}
+							: undefined
 				}
 			>
+				{isDropTarget && (
+					<span className="bg-emerald-600 text-white pointer-events-none absolute left-1/2 top-1 z-10 flex -translate-x-1/2 items-center gap-0.5 rounded px-1.5 py-0.5 text-[9px] font-medium leading-none">
+						<Replace className="size-2.5" />
+						Replace
+					</span>
+				)}
 				<div
 					className={cn(
 						"absolute inset-0 overflow-hidden rounded-sm",
@@ -1102,6 +1131,8 @@ function TiledMediaContent({
 		element.type === "video"
 			? mediaAsset?.thumbnailUrl
 			: (mediaAsset?.thumbnailUrl ?? mediaAsset?.url);
+	const isPendingDownload = mediaAsset?.downloadStatus === "pending";
+	const didDownloadFail = mediaAsset?.downloadStatus === "failed";
 
 	if (!imageUrl) {
 		return (
@@ -1124,6 +1155,7 @@ function TiledMediaContent({
 					backgroundRepeat: "repeat-x",
 					backgroundSize: `${tileWidth}px ${trackHeight}px`,
 					backgroundPosition: "left center",
+					filter: isPendingDownload ? "brightness(0.55)" : undefined,
 					pointerEvents: "none",
 				}}
 			/>
@@ -1136,6 +1168,16 @@ function TiledMediaContent({
 				}
 				hasFade={true}
 			/>
+			{isPendingDownload && (
+				<div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center bg-black/15">
+					<Spinner className="size-5 text-white drop-shadow" />
+				</div>
+			)}
+			{didDownloadFail && (
+				<div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center bg-black/55 px-2 text-center text-[10px] font-medium text-white">
+					Download failed
+				</div>
+			)}
 		</>
 	);
 }

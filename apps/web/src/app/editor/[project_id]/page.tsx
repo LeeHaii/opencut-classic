@@ -1,5 +1,6 @@
 "use client";
 
+import dynamic from "next/dynamic";
 import { useParams } from "next/navigation";
 import {
 	ResizablePanelGroup,
@@ -17,7 +18,7 @@ import { MigrationDialog } from "@/project/components/migration-dialog";
 import { usePanelStore } from "@/editor/panel-store";
 import { usePasteMedia } from "@/media/use-paste-media";
 import { MobileGate } from "@/components/editor/mobile-gate";
-import { useMemo, useState } from "react";
+import { useMemo, useState, useEffect } from "react";
 import { useEditor } from "@/editor/use-editor";
 import { Cancel01Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
@@ -36,7 +37,33 @@ import {
 } from "@/timeline/bookmarks/index";
 import { getHyperframesPreviewOverlaySource } from "@/hyperframes/preview-overlay";
 import { usePlaybackTime } from "@/hyperframes/use-playback-time";
+import { useHyperframesStudioStore } from "@/hyperframes/studio-store";
+import { useRhymxStore } from "@/plugins/rhymx/state/rhymx-store";
+import { getStockPreviewOverlaySource } from "@/plugins/rhymx/ui/stock-preview-overlay";
 import type { TScene } from "@/timeline";
+
+import type { PreviewOverlaySourceResult } from "@/preview/overlays";
+
+const EMPTY_OVERLAY_SOURCE: PreviewOverlaySourceResult = {
+	definitions: [],
+	instances: [],
+};
+
+const SceneStudioTimeline = dynamic(
+	async () => {
+		const studio =
+			await import("@/hyperframes/components/scene-studio-timeline");
+		return studio.SceneStudioTimeline;
+	},
+	{
+		ssr: false,
+		loading: () => (
+			<div className="panel bg-background text-muted-foreground flex h-full items-center justify-center rounded-sm border text-xs">
+				Loading scene timeline…
+			</div>
+		),
+	},
+);
 
 export default function Editor() {
 	const params = useParams();
@@ -87,6 +114,9 @@ function DegradedRendererBanner() {
 function EditorLayout() {
 	usePasteMedia();
 	const { panels, setPanel } = usePanelStore();
+	const studioElementId = useHyperframesStudioStore(
+		(state) => state.activeElementId,
+	);
 	const activeScene = useEditor((editor) =>
 		editor.scenes.getActiveSceneOrNull(),
 	);
@@ -170,7 +200,7 @@ function EditorLayout() {
 				maxSize={70}
 				className="min-h-0 px-3 pb-3"
 			>
-				<Timeline />
+				{studioElementId ? <SceneStudioTimeline /> : <Timeline />}
 			</ResizablePanel>
 		</ResizablePanelGroup>
 	);
@@ -183,16 +213,27 @@ function PlaybackOverlayPreviewPanel({
 	activeScene: TScene | null;
 	canvasSize: { width: number; height: number } | undefined;
 }) {
+	const editor = useEditor();
 	const currentTime = usePlaybackTime();
 	const activeGuide = usePreviewStore((state) => state.activeGuide);
 	const overlays = usePreviewStore((state) => state.overlays);
 	const setOverlayVisibility = usePreviewStore(
 		(state) => state.setOverlayVisibility,
 	);
+	const previewCandidate = useRhymxStore((state) => state.previewCandidate);
+	const studioElementId = useHyperframesStudioStore(
+		(state) => state.activeElementId,
+	);
 	const showBookmarkNotes = isPreviewOverlayVisible({
 		overlay: bookmarkNotesPreviewOverlay,
 		overlays,
 	});
+
+	useEffect(() => {
+		if (previewCandidate) {
+			editor.playback.pause();
+		}
+	}, [editor, previewCandidate]);
 
 	const overlaySource = useMemo(
 		() =>
@@ -216,11 +257,25 @@ function PlaybackOverlayPreviewPanel({
 								tracks: activeScene.tracks,
 								timelineTime: currentTime,
 								projectCanvasSize: canvasSize,
+								studioElementId,
 							})
 						: { definitions: [], instances: [] },
+					previewCandidate
+						? getStockPreviewOverlaySource({
+								candidate: previewCandidate,
+							})
+						: EMPTY_OVERLAY_SOURCE,
 				],
 			}),
-		[activeGuide, activeScene, canvasSize, currentTime, showBookmarkNotes],
+		[
+			activeGuide,
+			activeScene,
+			canvasSize,
+			currentTime,
+			previewCandidate,
+			showBookmarkNotes,
+			studioElementId,
+		],
 	);
 
 	const overlayControls = useMemo(

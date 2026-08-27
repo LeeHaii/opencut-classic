@@ -64,3 +64,30 @@ export function quickValidate(html: string): CompositionInfo | null {
 	const childCount = (html.match(/data-composition-src/g) ?? []).length;
 	return { compositionId, durationSecs, width, height, isMaster, childCount };
 }
+
+export interface AnimationAudit {
+	/** A window.__timelines registration is present. */
+	hasTimeline: boolean
+	/** The timeline actually contains GSAP tweens (from/to/fromTo/set/add). */
+	hasTweens: boolean
+}
+
+/**
+ * Heuristically verifies that a composition wires its motion into a seekable
+ * window.__timelines GSAP timeline. Compositions that fail this audit render
+ * as frozen frames in preview/export because the bridge can only seek a
+ * registered timeline.
+ */
+export function auditCompositionAnimation(html: string): AnimationAudit {
+	const hasTimeline =
+		/__timelines\s*(?:\[\s*["'`][^"'`]*["'`]\s*\]\s*=|=\s*\{)/.test(html) ||
+		/Object\.assign\(\s*window\.__timelines/.test(html);
+	if (!hasTimeline) {
+		return { hasTimeline: false, hasTweens: false };
+	}
+	const usesGsap = /\bgsap\b/.test(html);
+	const hasTweens =
+		usesGsap &&
+		/\.\s*(?:from|fromTo|to|set|add)\s*\(/.test(html);
+	return { hasTimeline, hasTweens };
+}

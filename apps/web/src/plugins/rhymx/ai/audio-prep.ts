@@ -18,8 +18,7 @@ const SUPPORTED_EXTENSIONS = new Set([
 ]);
 
 const TARGET_SAMPLE_RATE = 16_000;
-const SUPPORTED_LABEL =
-	"flac, mp3, mp4, mpeg, mpga, m4a, ogg, opus, wav, webm";
+const SUPPORTED_LABEL = "flac, mp3, mp4, mpeg, mpga, m4a, ogg, opus, wav, webm";
 
 /**
  * Returns the file unchanged when Groq can ingest it directly; otherwise
@@ -120,11 +119,7 @@ function encodeWav({
 	let offset = 44;
 	for (let index = 0; index < samples.length; index++) {
 		const sample = Math.max(-1, Math.min(1, samples[index]));
-		view.setInt16(
-			offset,
-			sample < 0 ? sample * 0x8000 : sample * 0x7fff,
-			true,
-		);
+		view.setInt16(offset, sample < 0 ? sample * 0x8000 : sample * 0x7fff, true);
 		offset += 2;
 	}
 

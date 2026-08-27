@@ -2,6 +2,7 @@ import {
 	Input,
 	ALL_FORMATS,
 	BlobSource,
+	UrlSource,
 	CanvasSink,
 	type WrappedCanvas,
 } from "mediabunny";
@@ -17,6 +18,13 @@ interface VideoSinkData {
 	prefetchPromise: Promise<void> | null;
 }
 
+interface VideoSourceDescriptor {
+	/** Local bytes; takes precedence over remoteUrl when present. */
+	file?: File | null;
+	/** Remote media URL streamed via HTTP range requests. */
+	remoteUrl?: string | null;
+}
+
 export class VideoCache {
 	private sinks = new Map<string, VideoSinkData>();
 	private initPromises = new Map<string, Promise<void>>();
@@ -26,13 +34,15 @@ export class VideoCache {
 	async getFrameAt({
 		mediaId,
 		file,
+		remoteUrl,
 		time,
 	}: {
 		mediaId: string;
-		file: File;
+		file?: File | null;
+		remoteUrl?: string | null;
 		time: number;
 	}): Promise<WrappedCanvas | null> {
-		await this.ensureSink({ mediaId, file });
+		await this.ensureSink({ mediaId, source: { file, remoteUrl } });
 
 		const sinkData = this.sinks.get(mediaId);
 		if (!sinkData) return null;
@@ -234,10 +244,10 @@ export class VideoCache {
 	}
 	private async ensureSink({
 		mediaId,
-		file,
+		source,
 	}: {
 		mediaId: string;
-		file: File;
+		source: VideoSourceDescriptor;
 	}): Promise<void> {
 		if (this.sinks.has(mediaId)) return;
 
@@ -246,7 +256,7 @@ export class VideoCache {
 			return;
 		}
 
-		const initPromise = this.initializeSink({ mediaId, file });
+		const initPromise = this.initializeSink({ mediaId, source });
 		this.initPromises.set(mediaId, initPromise);
 
 		try {
@@ -257,13 +267,22 @@ export class VideoCache {
 	}
 	private async initializeSink({
 		mediaId,
-		file,
+		source,
 	}: {
 		mediaId: string;
-		file: File;
+		source: VideoSourceDescriptor;
 	}): Promise<void> {
+		const { file, remoteUrl } = source;
+		let inputSource: BlobSource | UrlSource;
+		if (file) {
+			inputSource = new BlobSource(file);
+		} else if (remoteUrl) {
+			inputSource = new UrlSource(remoteUrl);
+		} else {
+			throw new Error(`No media source available for ${mediaId}`);
+		}
 		const input = new Input({
-			source: new BlobSource(file),
+			source: inputSource,
 			formats: ALL_FORMATS,
 		});
 

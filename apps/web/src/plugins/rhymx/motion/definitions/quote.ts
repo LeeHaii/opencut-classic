@@ -32,7 +32,14 @@ const QUOTE_PARAMS: ParamDefinition<keyof QuoteParams & string>[] = [
 	{ key: "accentColor", label: "Accent", type: "color", default: "#a78bfa" },
 ];
 
-function renderQuote({ ctx, params, width, height, localTime = 0, durationSec = 5 }: GraphicRenderContext): void {
+function renderQuote({
+	ctx,
+	params,
+	width,
+	height,
+	localTime = 0,
+	durationSec = 5,
+}: GraphicRenderContext): void {
 	ctx.clearRect(0, 0, width, height);
 	const cardEnter = entranceProgress({ localTime });
 	const textEnter = staggeredProgress({ localTime, index: 1 });

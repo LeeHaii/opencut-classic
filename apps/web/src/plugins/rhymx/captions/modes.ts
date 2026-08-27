@@ -35,7 +35,10 @@ function chunkedCues({
 		cues.push({
 			text: chunk.map((word) => word.text).join(" "),
 			startTime: chunk[0].startTimeSec,
-			duration: Math.max(0.2, chunk[chunk.length - 1].endTimeSec - chunk[0].startTimeSec),
+			duration: Math.max(
+				0.2,
+				chunk[chunk.length - 1].endTimeSec - chunk[0].startTimeSec,
+			),
 		});
 	}
 	return cues;

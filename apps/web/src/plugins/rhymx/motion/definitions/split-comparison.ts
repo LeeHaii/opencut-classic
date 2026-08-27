@@ -1,6 +1,11 @@
 import type { ParamDefinition } from "@/params";
 import type { GraphicDefinition, GraphicRenderContext } from "@/graphics";
-import { entranceProgress, exitFactor, easeOutCubic, clamp01 } from "../animation";
+import {
+	entranceProgress,
+	exitFactor,
+	easeOutCubic,
+	clamp01,
+} from "../animation";
 import {
 	accent,
 	drawGlassCard,
@@ -30,7 +35,14 @@ const SPLIT_PARAMS: ParamDefinition<keyof SplitComparisonParams & string>[] = [
 	{ key: "accentColor", label: "Accent", type: "color", default: "#fb7185" },
 ];
 
-function renderSplitComparison({ ctx, params, width, height, localTime = 0, durationSec = 5 }: GraphicRenderContext): void {
+function renderSplitComparison({
+	ctx,
+	params,
+	width,
+	height,
+	localTime = 0,
+	durationSec = 5,
+}: GraphicRenderContext): void {
 	ctx.clearRect(0, 0, width, height);
 	const enter = entranceProgress({ localTime });
 	const leftEnter = easeOutCubic({ t: localTime / 0.7 });
@@ -74,10 +86,18 @@ function renderSplitComparison({ ctx, params, width, height, localTime = 0, dura
 		setFont({ ctx, size: height * 0.04, weight: 700 });
 		ctx.fillStyle = withAlpha({ hex: color, alpha: 0.95 });
 		ctx.textAlign = "center";
-		ctx.fillText(card.title, card.x + cardWidth / 2, centerY + cardHeight * 0.28);
+		ctx.fillText(
+			card.title,
+			card.x + cardWidth / 2,
+			centerY + cardHeight * 0.28,
+		);
 		setFont({ ctx, size: height * 0.11, weight: 800 });
 		ctx.fillStyle = TEXT_PRIMARY;
-		ctx.fillText(card.value, card.x + cardWidth / 2, centerY + cardHeight * 0.66);
+		ctx.fillText(
+			card.value,
+			card.x + cardWidth / 2,
+			centerY + cardHeight * 0.66,
+		);
 	}
 
 	ctx.textAlign = "left";

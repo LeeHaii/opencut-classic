@@ -263,6 +263,12 @@ async function resolveAudioBufferForAsset({
 	asset: MediaAsset;
 	audioContext: AudioContext;
 }): Promise<AudioBuffer | null> {
+	// Remote (streamed) assets have no local bytes until downloaded for
+	// offline use — treat them as silent rather than crashing.
+	if (!asset.file) {
+		return null;
+	}
+
 	if (asset.type === "audio") {
 		try {
 			const arrayBuffer = await asset.file.arrayBuffer();
@@ -449,16 +455,16 @@ async function fetchLibraryAudioClip({
 
 function collectMediaAudioSource({
 	element,
-	mediaAsset,
+	file,
 	volume,
 }: {
 	element: AudioCapableElement;
-	mediaAsset: MediaAsset;
+	file: File;
 	volume: number;
 }): AudioMixSource {
 	return {
 		timelineElement: element,
-		file: mediaAsset.file,
+		file,
 		startTime: element.startTime / TICKS_PER_SECOND,
 		duration: element.duration / TICKS_PER_SECOND,
 		trimStart: element.trimStart / TICKS_PER_SECOND,
@@ -470,20 +476,22 @@ function collectMediaAudioSource({
 
 function collectMediaAudioClip({
 	element,
-	mediaAsset,
+	id,
+	file,
 	muted,
 	volume,
 }: {
 	element: AudioCapableElement;
-	mediaAsset: MediaAsset;
+	id: string;
+	file: File;
 	muted: boolean;
 	volume: number;
 }): AudioClipSource {
 	return {
 		timelineElement: element,
-		id: element.id,
-		sourceKey: mediaAsset.id,
-		file: mediaAsset.file,
+		id,
+		sourceKey: id,
+		file,
 		startTime: element.startTime / TICKS_PER_SECOND,
 		duration: element.duration / TICKS_PER_SECOND,
 		trimStart: element.trimStart / TICKS_PER_SECOND,
@@ -524,10 +532,14 @@ export async function collectAudioMixSources({
 			if (element.type === "audio") {
 				if (element.sourceType === "upload") {
 					const mediaAsset = mediaMap.get(element.mediaId);
-					if (!mediaAsset) continue;
+					if (!mediaAsset?.file) continue;
 
 					audioMixSources.push(
-						collectMediaAudioSource({ element, mediaAsset, volume }),
+						collectMediaAudioSource({
+							element,
+							file: mediaAsset.file,
+							volume,
+						}),
 					);
 				} else {
 					pendingLibrarySources.push(
@@ -538,9 +550,13 @@ export async function collectAudioMixSources({
 			}
 
 			if (element.type === "video" || element.type === "hyperframes") {
-				if (mediaAsset && mediaSupportsAudio({ media: mediaAsset })) {
+				if (mediaAsset?.file && mediaSupportsAudio({ media: mediaAsset })) {
 					audioMixSources.push(
-						collectMediaAudioSource({ element, mediaAsset, volume }),
+						collectMediaAudioSource({
+							element,
+							file: mediaAsset.file,
+							volume,
+						}),
 					);
 				}
 			}
@@ -588,12 +604,13 @@ export async function collectAudioClips({
 			if (element.type === "audio") {
 				if (element.sourceType === "upload") {
 					const mediaAsset = mediaMap.get(element.mediaId);
-					if (!mediaAsset) continue;
+					if (!mediaAsset?.file) continue;
 
 					clips.push(
 						collectMediaAudioClip({
 							element,
-							mediaAsset,
+							id: mediaAsset.id,
+							file: mediaAsset.file,
 							muted,
 							volume,
 						}),
@@ -607,11 +624,12 @@ export async function collectAudioClips({
 			}
 
 			if (element.type === "video" || element.type === "hyperframes") {
-				if (mediaAsset && mediaSupportsAudio({ media: mediaAsset })) {
+				if (mediaAsset?.file && mediaSupportsAudio({ media: mediaAsset })) {
 					clips.push(
 						collectMediaAudioClip({
 							element,
-							mediaAsset,
+							id: mediaAsset.id,
+							file: mediaAsset.file,
 							muted,
 							volume,
 						}),

@@ -10,10 +10,7 @@ import { mediaTimeFromSeconds } from "@/wasm";
 import { toast } from "sonner";
 import type { GraphicDefinition } from "@/graphics";
 import type { MotionTemplateMeta } from "../motion/library-types";
-import {
-	getRhymxTemplate,
-	listRhymxTemplates,
-} from "../motion/library";
+import { getRhymxTemplate, listRhymxTemplates } from "../motion/library";
 
 export function MotionLibraryView() {
 	const templates = listRhymxTemplates();
@@ -22,12 +19,14 @@ export function MotionLibraryView() {
 		<PanelView title="Motion Templates">
 			<div className="flex flex-col gap-3 pb-4">
 				<p className="text-muted-foreground px-1 text-xs">
-					Animated graphics rendered natively by the editor. Click to add at
-					the playhead, then edit contents in Properties.
+					Animated graphics rendered natively by the editor. Click to add at the
+					playhead, then edit contents in Properties.
 				</p>
 				<div
 					className="grid gap-2"
-					style={{ gridTemplateColumns: "repeat(auto-fill, minmax(150px, 1fr))" }}
+					style={{
+						gridTemplateColumns: "repeat(auto-fill, minmax(150px, 1fr))",
+					}}
 				>
 					{templates.map((meta) => (
 						<TemplateCard key={meta.id} meta={meta} />

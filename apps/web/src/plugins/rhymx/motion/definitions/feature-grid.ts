@@ -23,16 +23,24 @@ interface FeatureGridParams {
 	accentColor: string;
 }
 
-const FEATURE_GRID_PARAMS: ParamDefinition<keyof FeatureGridParams & string>[] = [
-	{ key: "title", label: "Title", type: "text", default: "Why it works" },
-	{ key: "item1", label: "Item 1", type: "text", default: "Fast" },
-	{ key: "item2", label: "Item 2", type: "text", default: "Simple" },
-	{ key: "item3", label: "Item 3", type: "text", default: "Affordable" },
-	{ key: "item4", label: "Item 4", type: "text", default: "Yours" },
-	{ key: "accentColor", label: "Accent", type: "color", default: "#2dd4bf" },
-];
+const FEATURE_GRID_PARAMS: ParamDefinition<keyof FeatureGridParams & string>[] =
+	[
+		{ key: "title", label: "Title", type: "text", default: "Why it works" },
+		{ key: "item1", label: "Item 1", type: "text", default: "Fast" },
+		{ key: "item2", label: "Item 2", type: "text", default: "Simple" },
+		{ key: "item3", label: "Item 3", type: "text", default: "Affordable" },
+		{ key: "item4", label: "Item 4", type: "text", default: "Yours" },
+		{ key: "accentColor", label: "Accent", type: "color", default: "#2dd4bf" },
+	];
 
-function renderFeatureGrid({ ctx, params, width, height, localTime = 0, durationSec = 5 }: GraphicRenderContext): void {
+function renderFeatureGrid({
+	ctx,
+	params,
+	width,
+	height,
+	localTime = 0,
+	durationSec = 5,
+}: GraphicRenderContext): void {
 	ctx.clearRect(0, 0, width, height);
 	const color = accent({ params });
 	const exit = exitFactor({ localTime, durationSec });
@@ -61,23 +69,24 @@ function renderFeatureGrid({ ctx, params, width, height, localTime = 0, duration
 		const row = Math.floor(index / 2);
 		const cellWidth = width * 0.3;
 		const cellHeight = height * 0.2;
-		const cellX = width / 2 - cellWidth - width * 0.02 + col * (cellWidth + width * 0.04);
+		const cellX =
+			width / 2 - cellWidth - width * 0.02 + col * (cellWidth + width * 0.04);
 		const cellY = height * 0.32 + row * (cellHeight + height * 0.04);
 
 		ctx.globalAlpha = exit * enter;
 		setFont({ ctx, size: height * 0.07, weight: 800 });
 		ctx.fillStyle = withAlpha({ hex: color, alpha: 0.9 });
-		ctx.fillText(String(index + 1).padStart(2, "0"), cellX, cellY + cellHeight * 0.4);
+		ctx.fillText(
+			String(index + 1).padStart(2, "0"),
+			cellX,
+			cellY + cellHeight * 0.4,
+		);
 
 		setFont({ ctx, size: height * 0.048, weight: 700 });
 		ctx.fillStyle = TEXT_PRIMARY;
 		const lines = wrapLines({ ctx, text: item, maxWidth: cellWidth * 0.8 });
 		lines.forEach((line, lineIndex) => {
-			ctx.fillText(
-				line,
-				cellX,
-				cellY + cellHeight * (0.75 + lineIndex * 0.35),
-			);
+			ctx.fillText(line, cellX, cellY + cellHeight * (0.75 + lineIndex * 0.35));
 		});
 	});
 

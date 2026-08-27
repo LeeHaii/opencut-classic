@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
 	PARENT_MESSAGE_SOURCE,
 	PREVIEW_MESSAGE_SOURCE,
@@ -21,12 +21,21 @@ import type {
 	TimelineTrack,
 } from "@/timeline";
 import { TICKS_PER_SECOND } from "@/wasm";
+import { Hand, MousePointer2 } from "lucide-react";
 import { getHyperframesPreviewLayout } from "./preview-layout";
+import {
+	postStudioPreviewAction,
+	type StudioPreviewSelection,
+} from "./studio-document";
+import { parseStudioRuntimeMotionSnapshot } from "./studio-animations";
+import { useHyperframesStudioStore } from "./studio-store";
 
 interface PreviewMessage {
 	source?: string;
 	type?: string;
 	message?: string;
+	element?: StudioPreviewSelection;
+	motion?: unknown;
 }
 
 interface HyperframesPreviewProps {
@@ -34,6 +43,7 @@ interface HyperframesPreviewProps {
 	projectCanvasSize: { width: number; height: number };
 	sceneViewportSize: { width: number; height: number };
 	timelineTime: number;
+	isStudio?: boolean;
 }
 
 function postControl({
@@ -59,10 +69,22 @@ function postControl({
 function elementLocalTimeSeconds({
 	element,
 	timelineTime,
+	focused = false,
 }: {
 	element: HyperframesElement;
 	timelineTime: number;
+	focused?: boolean;
 }): number {
+	if (focused) {
+		return Math.max(
+			0,
+			Math.min(
+				(element.sourceDuration ?? element.duration) / TICKS_PER_SECOND,
+				(timelineTime - element.startTime + element.trimStart) /
+					TICKS_PER_SECOND,
+			),
+		);
+	}
 	const localTicks = Math.max(
 		0,
 		Math.min(element.duration, timelineTime - element.startTime),
@@ -75,24 +97,45 @@ function HyperframesPreview({
 	projectCanvasSize,
 	sceneViewportSize,
 	timelineTime,
+	isStudio = false,
 }: HyperframesPreviewProps) {
 	const editor = useEditor();
 	const iframeRef = useRef<HTMLIFrameElement>(null);
 	const [error, setError] = useState<string | null>(null);
+	const studioTool = useHyperframesStudioStore((state) => state.tool);
+	const setStudioTool = useHyperframesStudioStore((state) => state.setTool);
+	const setPreviewIframe = useHyperframesStudioStore(
+		(state) => state.setPreviewIframe,
+	);
+	const setPreviewSelection = useHyperframesStudioStore(
+		(state) => state.setPreviewSelection,
+	);
+	const setRuntimeMotion = useHyperframesStudioStore(
+		(state) => state.setRuntimeMotion,
+	);
+	const selectedLayerSelector = useHyperframesStudioStore(
+		(state) => state.selectedLayerSelector,
+	);
 	const preparedHtml = useMemo(
 		() => preparePreviewHtml(element.html),
 		[element.html],
 	);
+	useEffect(() => {
+		if (isStudio) setRuntimeMotion(null);
+	}, [isStudio, preparedHtml, setRuntimeMotion]);
 	const localTime = getElementLocalTime({
 		timelineTime,
 		elementStartTime: element.startTime,
 		elementDuration: element.duration,
 	});
-	const transform = resolveTransformAtTime({
+	const resolvedTransform = resolveTransformAtTime({
 		baseTransform: buildTransformFromParams({ params: element.params }),
 		animations: element.animations,
 		localTime,
 	});
+	const transform = isStudio
+		? { position: { x: 0, y: 0 }, scaleX: 1, scaleY: 1, rotate: 0 }
+		: resolvedTransform;
 	const {
 		left,
 		top,
@@ -106,13 +149,45 @@ function HyperframesPreview({
 		sceneViewportSize,
 		transform,
 	});
+	const attachIframe = useCallback(
+		(node: HTMLIFrameElement | null) => {
+			iframeRef.current = node;
+			if (isStudio) setPreviewIframe(node);
+		},
+		[isStudio, setPreviewIframe],
+	);
+
+	useEffect(() => {
+		if (!isStudio) return;
+		postStudioPreviewAction({
+			iframe: iframeRef.current,
+			action: "set-editor-enabled",
+			payload: { enabled: studioTool === "select" },
+		});
+	}, [isStudio, studioTool, preparedHtml]);
+
+	useEffect(
+		() => () => {
+			if (
+				isStudio &&
+				useHyperframesStudioStore.getState().previewIframe === iframeRef.current
+			) {
+				setPreviewIframe(null);
+			}
+		},
+		[isStudio, setPreviewIframe],
+	);
 
 	useEffect(() => {
 		const syncTime = (time: number) => {
 			postControl({
 				iframe: iframeRef.current,
 				action: "seek",
-				timeSeconds: elementLocalTimeSeconds({ element, timelineTime: time }),
+				timeSeconds: elementLocalTimeSeconds({
+					element,
+					timelineTime: time,
+					focused: isStudio,
+				}),
 			});
 		};
 		const syncPlaybackState = () => {
@@ -128,10 +203,44 @@ function HyperframesPreview({
 				setError(null);
 				syncTime(editor.playback.getCurrentTime());
 				syncPlaybackState();
+				if (isStudio) {
+					postStudioPreviewAction({
+						iframe: iframeRef.current,
+						action: "set-editor-enabled",
+						payload: {
+							enabled: useHyperframesStudioStore.getState().tool === "select",
+						},
+					});
+					const selector =
+						useHyperframesStudioStore.getState().selectedLayerSelector;
+					if (selector) {
+						postStudioPreviewAction({
+							iframe: iframeRef.current,
+							action: "select-element",
+							payload: { selector, announce: true },
+						});
+					}
+				}
 			} else if (event.data.type === "error") {
 				setError(
 					event.data.message ?? "HyperFrames preview failed to initialize.",
 				);
+			} else if (
+				isStudio &&
+				event.data.type === "motion-snapshot" &&
+				event.data.motion
+			) {
+				const snapshot = parseStudioRuntimeMotionSnapshot(event.data.motion);
+				if (snapshot) setRuntimeMotion(snapshot);
+			} else if (
+				isStudio &&
+				(event.data.type === "element-selected" ||
+					event.data.type === "element-preview-updated") &&
+				event.data.element
+			) {
+				setPreviewSelection(event.data.element);
+			} else if (isStudio && event.data.type === "element-selection-cleared") {
+				setPreviewSelection(null);
 			}
 		};
 
@@ -145,23 +254,34 @@ function HyperframesPreview({
 			unsubscribeUpdate();
 			unsubscribeSeek();
 		};
-	}, [editor, element]);
+	}, [
+		editor,
+		element,
+		isStudio,
+		selectedLayerSelector,
+		setPreviewSelection,
+		setRuntimeMotion,
+	]);
 
 	return (
 		<div
-			className="absolute overflow-hidden"
+			className={`absolute overflow-hidden ${isStudio ? "ring-primary/70 ring-1" : ""}`}
 			style={{
 				left,
 				top,
 				width: displayedWidth,
 				height: displayedHeight,
-				opacity: readOpacityFromParams({ params: element.params }),
-				mixBlendMode: readBlendModeFromParams({ params: element.params }),
+				opacity: isStudio
+					? 1
+					: readOpacityFromParams({ params: element.params }),
+				mixBlendMode: isStudio
+					? "normal"
+					: readBlendModeFromParams({ params: element.params }),
 				transform: `translate(-50%, -50%) rotate(${transform.rotate}deg) scale(${Math.sign(transform.scaleX) || 1}, ${Math.sign(transform.scaleY) || 1})`,
 			}}
 		>
 			<iframe
-				ref={iframeRef}
+				ref={attachIframe}
 				title={`HyperFrames preview: ${element.name}`}
 				sandbox="allow-scripts"
 				referrerPolicy="no-referrer"
@@ -177,10 +297,36 @@ function HyperframesPreview({
 					postControl({
 						iframe: iframeRef.current,
 						action: "seek",
-						timeSeconds: elementLocalTimeSeconds({ element, timelineTime }),
+						timeSeconds: elementLocalTimeSeconds({
+							element,
+							timelineTime,
+							focused: isStudio,
+						}),
 					});
 				}}
 			/>
+			{isStudio && (
+				<div className="absolute top-2 left-2 z-50 flex gap-1 rounded-md border border-white/15 bg-black/75 p-1 shadow-lg backdrop-blur-sm">
+					<button
+						type="button"
+						aria-label="Select and edit layers"
+						aria-pressed={studioTool === "select"}
+						className={`flex size-7 items-center justify-center rounded text-white transition-colors ${studioTool === "select" ? "bg-sky-500" : "hover:bg-white/10"}`}
+						onClick={() => setStudioTool("select")}
+					>
+						<MousePointer2 className="size-3.5" />
+					</button>
+					<button
+						type="button"
+						aria-label="Interact with the composition"
+						aria-pressed={studioTool === "interact"}
+						className={`flex size-7 items-center justify-center rounded text-white transition-colors ${studioTool === "interact" ? "bg-sky-500" : "hover:bg-white/10"}`}
+						onClick={() => setStudioTool("interact")}
+					>
+						<Hand className="size-3.5" />
+					</button>
+				</div>
+			)}
 			{error && (
 				<div className="bg-destructive/85 absolute inset-x-0 bottom-0 px-2 py-1 text-[10px] text-white">
 					{error}
@@ -194,15 +340,37 @@ export function getHyperframesPreviewOverlaySource({
 	tracks,
 	timelineTime,
 	projectCanvasSize,
+	studioElementId,
 }: {
 	tracks: SceneTracks;
 	timelineTime: number;
 	projectCanvasSize: { width: number; height: number };
+	/** Scene Studio focus mode: always render this element, ignoring playhead. */
+	studioElementId?: string | null;
 }): PreviewOverlaySourceResult {
 	const orderedTracks: TimelineTrack[] = [
 		...tracks.overlay,
 		tracks.main,
 	].reverse();
+
+	if (studioElementId) {
+		for (const track of orderedTracks) {
+			const match = track.elements.find(
+				(element): element is HyperframesElement =>
+					element.id === studioElementId &&
+					element.type === "hyperframes" &&
+					element.html.trim().length > 0,
+			);
+			if (match) {
+				return buildStudioOverlay({
+					element: match,
+					projectCanvasSize,
+				});
+			}
+		}
+		return { definitions: [], instances: [] };
+	}
+
 	let activeElement: HyperframesElement | null = null;
 	for (const track of orderedTracks) {
 		if ("hidden" in track && track.hidden) continue;
@@ -240,6 +408,36 @@ export function getHyperframesPreviewOverlaySource({
 						projectCanvasSize={projectCanvasSize}
 						sceneViewportSize={{ width: sceneWidth, height: sceneHeight }}
 						timelineTime={timelineTime}
+					/>
+				),
+			},
+		],
+	};
+}
+
+function buildStudioOverlay({
+	element,
+	projectCanvasSize,
+}: {
+	element: HyperframesElement;
+	projectCanvasSize: { width: number; height: number };
+}): PreviewOverlaySourceResult {
+	return {
+		definitions: [],
+		instances: [
+			{
+				id: `hyperframes-studio-${element.id}`,
+				mount: { kind: "scene" },
+				plane: "over-interaction",
+				pointerEvents: "auto",
+				zIndex: 30,
+				render: ({ sceneWidth, sceneHeight }) => (
+					<HyperframesPreview
+						element={element}
+						projectCanvasSize={projectCanvasSize}
+						sceneViewportSize={{ width: sceneWidth, height: sceneHeight }}
+						timelineTime={0}
+						isStudio
 					/>
 				),
 			},

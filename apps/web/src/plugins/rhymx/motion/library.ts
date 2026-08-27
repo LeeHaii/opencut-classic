@@ -79,18 +79,30 @@ export function suggestTemplateForScene({
 }): string {
 	const haystack = [visualIntent, ...keywords].join(" ").toLowerCase();
 	const rules: Array<{ match: string[]; id: string }> = [
-		{ match: ["percent", "%", "statistic", "stat", "number"], id: "rhymx.statistic" },
+		{
+			match: ["percent", "%", "statistic", "stat", "number"],
+			id: "rhymx.statistic",
+		},
 		{ match: ["quote", "citation", "said"], id: "rhymx.quote" },
 		{ match: ["progress", "growth", "complete"], id: "rhymx.progress-bar" },
-		{ match: ["compare", "versus", "vs", "before", "after"], id: "rhymx.split-comparison" },
+		{
+			match: ["compare", "versus", "vs", "before", "after"],
+			id: "rhymx.split-comparison",
+		},
 		{ match: ["checklist", "steps", "list"], id: "rhymx.checklist" },
 		{ match: ["countdown", "timer"], id: "rhymx.countdown" },
 		{ match: ["chapter", "part two", "section"], id: "rhymx.chapter-card" },
-		{ match: ["subscribe", "follow", "call to action", "cta"], id: "rhymx.social-callout" },
+		{
+			match: ["subscribe", "follow", "call to action", "cta"],
+			id: "rhymx.social-callout",
+		},
 		{ match: ["features", "benefits", "grid"], id: "rhymx.feature-grid" },
 		{ match: ["product", "price", "shop"], id: "rhymx.product-card" },
 		{ match: ["outro", "end card", "thanks"], id: "rhymx.end-card" },
-		{ match: ["kinetic", "typography", "energetic title"], id: "rhymx.kinetic-title" },
+		{
+			match: ["kinetic", "typography", "energetic title"],
+			id: "rhymx.kinetic-title",
+		},
 	];
 	for (const rule of rules) {
 		if (rule.match.some((needle) => haystack.includes(needle))) {

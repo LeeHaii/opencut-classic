@@ -8,17 +8,20 @@ import {
 	Happy01Icon,
 	HeadphonesIcon,
 	HtmlFiveIcon,
+	Layers01Icon,
 	MagicWand05Icon,
 	TextIcon,
 	Settings01Icon,
 	SlidersHorizontalIcon,
 	AiMagicIcon,
 	SparklesIcon,
+	Video01Icon,
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon, type IconSvgElement } from "@hugeicons/react";
 
 export const TAB_KEYS = [
 	"media",
+	"stock",
 	"sounds",
 	"text",
 	"stickers",
@@ -29,6 +32,7 @@ export const TAB_KEYS = [
 	"ai",
 	"motion",
 	"hyperframes",
+	"studio",
 	"settings",
 ] as const;
 
@@ -46,6 +50,10 @@ export const tabs = {
 	media: {
 		icon: createHugeiconsIcon({ icon: Folder03Icon }),
 		label: "Media",
+	},
+	stock: {
+		icon: createHugeiconsIcon({ icon: Video01Icon }),
+		label: "Stock videos",
 	},
 	sounds: {
 		icon: createHugeiconsIcon({ icon: HeadphonesIcon }),
@@ -86,6 +94,10 @@ export const tabs = {
 	hyperframes: {
 		icon: createHugeiconsIcon({ icon: HtmlFiveIcon }),
 		label: "AI Motion (HyperFrames)",
+	},
+	studio: {
+		icon: createHugeiconsIcon({ icon: Layers01Icon }),
+		label: "Scene Studio",
 	},
 	settings: {
 		icon: createHugeiconsIcon({ icon: Settings01Icon }),

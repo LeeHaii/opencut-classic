@@ -83,7 +83,8 @@ async function importRenderedClip({
 	if (!asset) throw new Error("The rendered clip could not be imported.");
 	asset.ephemeral = true;
 	const added = await editor.media.addMediaAsset({ projectId, asset });
-	if (!added) throw new Error("The rendered clip could not be added to the project.");
+	if (!added)
+		throw new Error("The rendered clip could not be added to the project.");
 
 	editor.timeline.updateElements({
 		updates: [

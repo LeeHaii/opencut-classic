@@ -15,13 +15,16 @@ import { TextView } from "@/text/components/assets-view";
 import { EffectsView } from "@/effects/components/assets-view";
 import { AiPanelView } from "@/plugins/rhymx/ui/ai-panel-view";
 import { MotionLibraryView } from "@/plugins/rhymx/ui/motion-library-view";
+import { StockPanelView } from "@/plugins/rhymx/ui/stock-panel-view";
 import { AiMotionPanelView } from "@/hyperframes/components/ai-motion-panel";
+import { StudioPanelView } from "@/hyperframes/components/studio-panel";
 
 export function AssetsPanel() {
 	const { activeTab } = useAssetsPanelStore();
 
 	const viewMap: Record<Tab, React.ReactNode> = {
 		media: <MediaView />,
+		stock: <StockPanelView />,
 		sounds: <SoundsView />,
 		text: <TextView />,
 		stickers: <StickersView />,
@@ -40,6 +43,7 @@ export function AssetsPanel() {
 		ai: <AiPanelView />,
 		motion: <MotionLibraryView />,
 		hyperframes: <AiMotionPanelView />,
+		studio: <StudioPanelView />,
 		settings: <SettingsView />,
 	};
 

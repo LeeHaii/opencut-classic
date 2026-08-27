@@ -121,7 +121,10 @@ export function segmentTranscriptSegments({
 		const spanEndsSentence = SENTENCE_ENDINGS.test(segment.text.trim());
 		bufferText += `${bufferText ? " " : ""}${segment.text.trim()}`;
 		const span = segment.end - bufferStart;
-		if (span >= MIN_SCENE_SEC || (span >= MIN_SENTENCE_SCENE_SEC && spanEndsSentence)) {
+		if (
+			span >= MIN_SCENE_SEC ||
+			(span >= MIN_SENTENCE_SCENE_SEC && spanEndsSentence)
+		) {
 			flush(segment.end);
 		}
 	}

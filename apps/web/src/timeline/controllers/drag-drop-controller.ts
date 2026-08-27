@@ -14,7 +14,11 @@ import {
 	buildElementFromMedia,
 	buildEffectElement,
 } from "@/timeline/element-utils";
-import { AddTrackCommand, InsertElementCommand } from "@/commands/timeline";
+import {
+	AddTrackCommand,
+	InsertElementCommand,
+	ReplaceMediaCommand,
+} from "@/commands/timeline";
 import { BatchCommand } from "@/commands";
 import type { Command } from "@/commands/base-command";
 import { computeDropTarget } from "@/timeline/components/drop-target";
@@ -30,7 +34,9 @@ import type {
 import type { TimelineDragData } from "@/timeline/drag";
 import type { MediaAsset } from "@/media/types";
 import type { ProcessedMediaAsset } from "@/media/processing";
-import { roundFrameTime, type MediaTime } from "@/wasm";
+import { roundFrameTime, mediaTimeToSeconds, type MediaTime } from "@/wasm";
+import { toast } from "sonner";
+import { findTrackInSceneTracks } from "@/timeline";
 
 // --- Config ---
 
@@ -120,7 +126,9 @@ function getDurationForDrag({
 }): MediaTime {
 	if (dragData.type !== "media") return DEFAULT_NEW_ELEMENT_DURATION;
 	const media = mediaAssets.find((asset) => asset.id === dragData.id);
-	return toElementDurationTicks({ seconds: media?.duration });
+	return toElementDurationTicks({
+		seconds: media?.duration ?? dragData.duration,
+	});
 }
 
 function orderedTracks({
@@ -256,7 +264,29 @@ export class DragDropController {
 		try {
 			if (dragData) {
 				if (!currentTarget) return;
-				this.executeAssetDrop({ target: currentTarget, dragData });
+				const resolvedDragData = this.config.dragSource.resolveForDrop();
+				if (!resolvedDragData) return;
+				if (resolvedDragData instanceof Promise) {
+					void resolvedDragData
+						.then((resolved) => {
+							this.executeAssetDrop({
+								target: currentTarget,
+								dragData: resolved,
+							});
+						})
+						.catch((error) => {
+							console.error("Failed to prepare dropped asset:", error);
+							toast.error("Couldn't add media", {
+								description:
+									error instanceof Error ? error.message : "Download failed",
+							});
+						});
+					return;
+				}
+				this.executeAssetDrop({
+					target: currentTarget,
+					dragData: resolvedDragData,
+				});
 				return;
 			}
 
@@ -433,7 +463,7 @@ export class DragDropController {
 		dragData: Extract<TimelineDragData, { type: "media" }>;
 	}): void {
 		if (target.targetElement) {
-			// Replace media source — not yet implemented
+			this.executeReplaceMediaDrop({ target, dragData });
 			return;
 		}
 
@@ -452,6 +482,73 @@ export class DragDropController {
 			startTime: target.xPosition,
 		});
 		this.insertAtTarget({ element, target, trackType });
+	}
+
+	/**
+	 * CapCut-style replace: the drag hovered an existing segment, so swap its
+	 * media instead of inserting a new clip. One undoable command; the user
+	 * is notified when the new media is shorter than the segment.
+	 */
+	private executeReplaceMediaDrop({
+		target,
+		dragData,
+	}: {
+		target: DropTarget;
+		dragData: Extract<TimelineDragData, { type: "media" }>;
+	}): void {
+		const targetElement = target.targetElement;
+		if (!targetElement) return;
+
+		const track = findTrackInSceneTracks({
+			tracks: this.config.getSceneTracks(),
+			trackId: targetElement.trackId,
+		});
+		const element = track?.elements.find(
+			(candidate) => candidate.id === targetElement.elementId,
+		);
+		if (!track || !element) return;
+
+		const isCompatible =
+			dragData.mediaType === "audio"
+				? element.type === "audio"
+				: element.type === "video" || element.type === "image";
+		if (!isCompatible) {
+			toast.error(
+				`Can't replace an ${element.type} clip with ${dragData.mediaType === "audio" ? "an audio" : `a ${dragData.mediaType}`} asset`,
+			);
+			return;
+		}
+
+		const mediaAsset = this.config
+			.getMediaAssets()
+			.find((asset) => asset.id === dragData.id);
+		if (!mediaAsset) return;
+
+		const previousDurationSec = mediaTimeToSeconds({
+			time: element.duration,
+		});
+		this.config.executeCommand(
+			new ReplaceMediaCommand({
+				trackId: track.id,
+				elementId: element.id,
+				mediaId: mediaAsset.id,
+				mediaType: mediaAsset.type,
+				assetDurationSec: mediaAsset.duration,
+			}),
+		);
+
+		const replacedDurationSec =
+			mediaAsset.duration != null && mediaAsset.duration > 0
+				? Math.min(previousDurationSec, mediaAsset.duration)
+				: previousDurationSec;
+		const trimmedSec = previousDurationSec - replacedDurationSec;
+		if (trimmedSec > 0.01) {
+			toast.info("Clip replaced with shorter media", {
+				description: `Segment trimmed by ${trimmedSec.toFixed(1)}s. Undo (Ctrl+Z) restores the original clip.`,
+			});
+		} else {
+			toast.success("Clip replaced");
+		}
 	}
 
 	private executeEffectDrop({

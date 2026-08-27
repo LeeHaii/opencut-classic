@@ -1,6 +1,11 @@
 import type { ParamDefinition } from "@/params";
 import type { GraphicDefinition, GraphicRenderContext } from "@/graphics";
-import { entranceProgress, exitFactor, easeOutBack, clamp01 } from "../animation";
+import {
+	entranceProgress,
+	exitFactor,
+	easeOutBack,
+	clamp01,
+} from "../animation";
 import {
 	accent,
 	roundRectPath,
@@ -21,12 +26,24 @@ interface EndCardParams {
 }
 
 const END_CARD_PARAMS: ParamDefinition<keyof EndCardParams & string>[] = [
-	{ key: "title", label: "Title", type: "text", default: "Thanks for watching" },
+	{
+		key: "title",
+		label: "Title",
+		type: "text",
+		default: "Thanks for watching",
+	},
 	{ key: "cta", label: "Button", type: "text", default: "Watch next" },
 	{ key: "accentColor", label: "Accent", type: "color", default: "#22d3ee" },
 ];
 
-function renderEndCard({ ctx, params, width, height, localTime = 0, durationSec = 4 }: GraphicRenderContext): void {
+function renderEndCard({
+	ctx,
+	params,
+	width,
+	height,
+	localTime = 0,
+	durationSec = 4,
+}: GraphicRenderContext): void {
 	ctx.clearRect(0, 0, width, height);
 	const enter = entranceProgress({ localTime });
 	const ctaPop = easeOutBack({ t: (localTime - 0.35) / 0.5 });
