@@ -1,5 +1,5 @@
 use hyperframes::{
-    SeedSpec, append_child_to_master, composition_dirs, layout, new_master_document,
+    SeedSpec, append_child_to_master, composition_dirs_in, layout, new_master_document,
     normalize_child, seed_composition,
 };
 use serde::Deserialize;
@@ -91,8 +91,8 @@ pub fn studio_open(
         "The HyperFrames CLI is missing. Reinstall OpenCut desktop or set HYPERFRAMES_CLI_PATH",
     )?;
 
-    let base = crate::commands::project_base(&app)?;
-    let dirs = composition_dirs(&base, &request.project_id, &request.element_id);
+    let projects_dir = crate::commands::settings::hyperframes_location(&app)?;
+    let dirs = composition_dirs_in(&projects_dir, &request.project_id, &request.element_id);
     std::fs::create_dir_all(&dirs.compositions).map_err(|e| e.to_string())?;
     ensure_project(&request, &dirs.root)?;
 
@@ -254,8 +254,8 @@ pub fn studio_write(app: AppHandle, request: StudioWriteRequest) -> Result<bool,
             return Err(format!("invalid identifier: {id}"));
         }
     }
-    let base = crate::commands::project_base(&app)?;
-    let dirs = composition_dirs(&base, &request.project_id, &request.element_id);
+    let projects_dir = crate::commands::settings::hyperframes_location(&app)?;
+    let dirs = composition_dirs_in(&projects_dir, &request.project_id, &request.element_id);
     if !dirs.index_html.exists() {
         return Err("Studio project does not exist yet".to_string());
     }
@@ -304,8 +304,8 @@ pub fn studio_append(
     if request.html.len() > MAX_MASTER_CHARS {
         return Err("generated composition is too large".to_string());
     }
-    let base = crate::commands::project_base(&app)?;
-    let dirs = composition_dirs(&base, &request.project_id, &request.element_id);
+    let projects_dir = crate::commands::settings::hyperframes_location(&app)?;
+    let dirs = composition_dirs_in(&projects_dir, &request.project_id, &request.element_id);
     std::fs::create_dir_all(&dirs.compositions).map_err(|e| e.to_string())?;
 
     let slug = request.slug.unwrap_or_else(|| {

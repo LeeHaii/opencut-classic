@@ -30,10 +30,14 @@ fn main() {
             }
         }))
         .plugin(tauri_plugin_fs::init())
+        .plugin(tauri_plugin_dialog::init())
         .manage(AppState::default())
         .invoke_handler(tauri::generate_handler![
             commands::ping,
             commands::app_data_dir,
+            commands::settings::location_settings_get,
+            commands::settings::location_settings_save,
+            commands::settings::location_pick_folder,
             commands::antigravity::antigravity_status,
             commands::antigravity::antigravity_login,
             commands::antigravity::antigravity_run,
@@ -47,12 +51,19 @@ fn main() {
             commands::studio::studio_close
         ])
         .setup(|app| {
+            let project_location = commands::settings::project_location(app.handle())?;
+            std::fs::create_dir_all(&project_location)
+                .map_err(|e| format!("failed to create project location: {e}"))?;
+            app.manage(commands::settings::LocationRuntime::new(
+                project_location.clone(),
+            ));
             let url = editor_url();
             let parsed: tauri::Url = url
                 .parse()
                 .map_err(|e| format!("invalid editor url: {e}"))?;
             let window = WebviewWindowBuilder::new(app, "main", WebviewUrl::External(parsed))
-                .title("OpenCut")
+                .data_directory(project_location)
+                .title("RhymxCut")
                 .inner_size(1440.0, 900.0)
                 .min_inner_size(1024.0, 640.0)
                 // Let HTML5 drag-and-drop work inside the editor (media bin,

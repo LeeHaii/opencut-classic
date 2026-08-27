@@ -1,4 +1,4 @@
-use hyperframes::{composition_dirs, layout, media_refs, validate_composition};
+use hyperframes::{composition_dirs_in, layout, media_refs, validate_composition};
 use serde::Deserialize;
 use std::io::{BufRead, BufReader};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -45,8 +45,8 @@ pub fn hf_render(
         "The HyperFrames CLI is missing. Reinstall OpenCut desktop or set HYPERFRAMES_CLI_PATH",
     )?;
 
-    let base = crate::commands::project_base(&app)?;
-    let dirs = composition_dirs(&base, &request.project_id, &request.element_id);
+    let projects_dir = crate::commands::settings::hyperframes_location(&app)?;
+    let dirs = composition_dirs_in(&projects_dir, &request.project_id, &request.element_id);
     std::fs::create_dir_all(&dirs.compositions).map_err(|e| e.to_string())?;
     std::fs::create_dir_all(&dirs.renders).map_err(|e| e.to_string())?;
 
@@ -56,7 +56,7 @@ pub fn hf_render(
         .media_base
         .as_deref()
         .map(std::path::PathBuf::from)
-        .unwrap_or_else(|| base.join("projects").join(&request.project_id));
+        .unwrap_or_else(|| projects_dir.join(&request.project_id));
     let portable = media_refs::rewrite_to_portable(&request.html, &media_base);
     layout::write_atomic(&dirs.index_html, &portable)
         .map_err(|e| format!("failed to write composition: {e}"))?;
