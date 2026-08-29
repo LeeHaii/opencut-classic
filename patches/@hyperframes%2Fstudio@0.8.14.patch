@@ -1,7 +1,23 @@
+diff --git a/dist/index.d.ts b/dist/index.d.ts
+index 4fc1309df0e53149112eeefbcca295cc33274f6d..f2ee0ad87f911bc5d3689b189a4bf6d192472e3a 100644
+--- a/dist/index.d.ts
++++ b/dist/index.d.ts
+@@ -769,6 +769,10 @@ interface TimelineClipRenderContext {
+ interface TimelineProps extends TimelineDropCallbacks, TimelineEditOverrides {
+     /** Project-scoped reset boundary; soft source refreshes retain the same epoch. */
+     sessionEpoch?: number;
++    onDeleteKeyframe?: TimelineEditCallbacks["onDeleteKeyframe"];
++    onDeleteAllKeyframes?: TimelineEditCallbacks["onDeleteAllKeyframes"];
++    onMoveKeyframeToPlayhead?: TimelineEditCallbacks["onMoveKeyframeToPlayhead"];
++    onMoveKeyframe?: TimelineEditCallbacks["onMoveKeyframe"];
+     onSeek?: (time: number) => void;
+     onDrillDown?: (element: TimelineElement) => void;
+     renderClipContent?: (element: TimelineElement, style: {
 diff --git a/dist/index.js b/dist/index.js
+index 3221daf8682078e57989d805d52cbe9fb1f8be5f..5844e0ceec5be8657d09464c0d411ccc00b9a631 100644
 --- a/dist/index.js
 +++ b/dist/index.js
-@@ -1531,7 +1531,7 @@ function resolveTimelineDuration(duration) {
+@@ -1531,7 +1531,7 @@ function createTimelineFocusRequest(id, projectId, sessionEpoch, nonce) {
  }
  
  // src/player/lib/thumbnailPolicy.ts
@@ -10,7 +26,8 @@ diff --git a/dist/index.js b/dist/index.js
  var studioThumbnailRuntimePolicy = rawPolicy === "force-hidden" || rawPolicy === "legacy-default" ? rawPolicy : "follow-preference";
  function defaultThumbnailMode(storedMode, policy = studioThumbnailRuntimePolicy) {
    return storedMode ?? (policy === "legacy-default" ? "hidden" : "adaptive");
-@@ -21661,6 +21661,6 @@
+@@ -21660,7 +21660,7 @@ function useAutoExpandKeyframedClips(gsapAnimations) {
+ import { useCallback as useCallback23, useEffect as useEffect26, useRef as useRef34, useState as useState20 } from "react";
  
  // src/player/components/timelineRowVirtualizationFlag.ts
 -var STUDIO_TIMELINE_ROW_VIRTUALIZATION_ENABLED = import.meta.env.VITE_STUDIO_TIMELINE_ROW_VIRTUALIZATION_ENABLED !== "0";
@@ -18,7 +35,97 @@ diff --git a/dist/index.js b/dist/index.js
  
  // src/player/components/useTimelineScrollViewport.ts
  var EMPTY_VIEWPORT = Object.freeze({
+@@ -21771,7 +21771,11 @@ function useResolvedTimelineEditCallbacks(overrides) {
+     onResizeElement,
+     onResizeElements,
+     onBlockedEditAttempt,
+-    onSplitElement
++    onSplitElement,
++    onDeleteKeyframe,
++    onDeleteAllKeyframes,
++    onMoveKeyframeToPlayhead,
++    onMoveKeyframe
+   } = overrides;
+   return useMemo20(
+     () => ({
+@@ -21781,7 +21785,11 @@ function useResolvedTimelineEditCallbacks(overrides) {
+       onResizeElement: onResizeElement ?? ctx3.onResizeElement,
+       onResizeElements: onResizeElements ?? ctx3.onResizeElements,
+       onBlockedEditAttempt: onBlockedEditAttempt ?? ctx3.onBlockedEditAttempt,
+-      onSplitElement: onSplitElement ?? ctx3.onSplitElement
++      onSplitElement: onSplitElement ?? ctx3.onSplitElement,
++      onDeleteKeyframe: onDeleteKeyframe ?? ctx3.onDeleteKeyframe,
++      onDeleteAllKeyframes: onDeleteAllKeyframes ?? ctx3.onDeleteAllKeyframes,
++      onMoveKeyframeToPlayhead: onMoveKeyframeToPlayhead ?? ctx3.onMoveKeyframeToPlayhead,
++      onMoveKeyframe: onMoveKeyframe ?? ctx3.onMoveKeyframe
+     }),
+     [
+       ctx3,
+@@ -21790,7 +21798,11 @@ function useResolvedTimelineEditCallbacks(overrides) {
+       onResizeElement,
+       onResizeElements,
+       onBlockedEditAttempt,
+-      onSplitElement
++      onSplitElement,
++      onDeleteKeyframe,
++      onDeleteAllKeyframes,
++      onMoveKeyframeToPlayhead,
++      onMoveKeyframe
+     ]
+   );
+ }
+@@ -22942,6 +22954,10 @@ var Timeline = memo16(function Timeline2({
+   onResizeElements: onResizeElementsOverride,
+   onBlockedEditAttempt: onBlockedEditAttemptOverride,
+   onSplitElement: onSplitElementOverride,
++  onDeleteKeyframe: onDeleteKeyframeOverride,
++  onDeleteAllKeyframes: onDeleteAllKeyframesOverride,
++  onMoveKeyframeToPlayhead: onMoveKeyframeToPlayheadOverride,
++  onMoveKeyframe: onMoveKeyframeOverride,
+   onSelectElement,
+   theme: themeOverrides,
+   sessionEpoch = 0
+@@ -22964,7 +22980,11 @@ var Timeline = memo16(function Timeline2({
+     onResizeElement: onResizeElementOverride,
+     onResizeElements: onResizeElementsOverride,
+     onBlockedEditAttempt: onBlockedEditAttemptOverride,
+-    onSplitElement: onSplitElementOverride
++    onSplitElement: onSplitElementOverride,
++    onDeleteKeyframe: onDeleteKeyframeOverride,
++    onDeleteAllKeyframes: onDeleteAllKeyframesOverride,
++    onMoveKeyframeToPlayhead: onMoveKeyframeToPlayheadOverride,
++    onMoveKeyframe: onMoveKeyframeOverride
+   });
+   const theme = useMemo30(() => ({ ...defaultTimelineTheme, ...themeOverrides }), [themeOverrides]);
+   const refreshAfterLaneMove = useTimelineLaneMoveRefresh();
+diff --git a/src/player/components/Timeline.tsx b/src/player/components/Timeline.tsx
+index 6274d915e1232e20db8b6715f784ee80e6fe732e..bbf4434ccc2969c31a15c8487435f78b612bde99 100644
+--- a/src/player/components/Timeline.tsx
++++ b/src/player/components/Timeline.tsx
+@@ -78,6 +78,10 @@ export const Timeline = memo(function Timeline({
+   onResizeElements: onResizeElementsOverride,
+   onBlockedEditAttempt: onBlockedEditAttemptOverride,
+   onSplitElement: onSplitElementOverride,
++  onDeleteKeyframe: onDeleteKeyframeOverride,
++  onDeleteAllKeyframes: onDeleteAllKeyframesOverride,
++  onMoveKeyframeToPlayhead: onMoveKeyframeToPlayheadOverride,
++  onMoveKeyframe: onMoveKeyframeOverride,
+   onSelectElement,
+   theme: themeOverrides,
+   sessionEpoch = 0,
+@@ -101,6 +105,10 @@ export const Timeline = memo(function Timeline({
+     onResizeElements: onResizeElementsOverride,
+     onBlockedEditAttempt: onBlockedEditAttemptOverride,
+     onSplitElement: onSplitElementOverride,
++    onDeleteKeyframe: onDeleteKeyframeOverride,
++    onDeleteAllKeyframes: onDeleteAllKeyframesOverride,
++    onMoveKeyframeToPlayhead: onMoveKeyframeToPlayheadOverride,
++    onMoveKeyframe: onMoveKeyframeOverride,
+   });
+   const theme = useMemo(() => ({ ...defaultTimelineTheme, ...themeOverrides }), [themeOverrides]);
+   const refreshAfterLaneMove = useTimelineLaneMoveRefresh();
 diff --git a/src/player/components/timelineRowVirtualizationFlag.ts b/src/player/components/timelineRowVirtualizationFlag.ts
+index 322028f5cfdad940c6161f528754ff3e02649066..9f18bb6dc9f8a58f89f5946f1d53cd10e7a82401 100644
 --- a/src/player/components/timelineRowVirtualizationFlag.ts
 +++ b/src/player/components/timelineRowVirtualizationFlag.ts
 @@ -7,4 +7,4 @@
@@ -27,22 +134,11 @@ diff --git a/src/player/components/timelineRowVirtualizationFlag.ts b/src/player
  export const STUDIO_TIMELINE_ROW_VIRTUALIZATION_ENABLED =
 -  import.meta.env.VITE_STUDIO_TIMELINE_ROW_VIRTUALIZATION_ENABLED !== "0";
 +  import.meta.env?.VITE_STUDIO_TIMELINE_ROW_VIRTUALIZATION_ENABLED !== "0";
-diff --git a/src/player/lib/thumbnailPolicy.ts b/src/player/lib/thumbnailPolicy.ts
---- a/src/player/lib/thumbnailPolicy.ts
-+++ b/src/player/lib/thumbnailPolicy.ts
-@@ -4,7 +4,7 @@ export type ThumbnailRuntimePolicy = "follow-preference" | "force-hidden" | "le
- // "Adaptive" currently means the scheduler pauses rich work while scrolling.
- // The mode name leaves room for finer-grained runtime heuristics later.
- 
--const rawPolicy = import.meta.env.VITE_STUDIO_TIMELINE_THUMBNAIL_POLICY;
-+const rawPolicy = import.meta.env?.VITE_STUDIO_TIMELINE_THUMBNAIL_POLICY;
- 
- const studioThumbnailRuntimePolicy: ThumbnailRuntimePolicy =
-   rawPolicy === "force-hidden" || rawPolicy === "legacy-default" ? rawPolicy : "follow-preference";
 diff --git a/src/player/components/useResolvedTimelineEditCallbacks.ts b/src/player/components/useResolvedTimelineEditCallbacks.ts
+index 44e9048096d7a76bcda1a6bb5e0b8e92144fd367..b6685ab6df95d34881652123c5f5c18490533fc8 100644
 --- a/src/player/components/useResolvedTimelineEditCallbacks.ts
 +++ b/src/player/components/useResolvedTimelineEditCallbacks.ts
-@@ -12,4 +12,8 @@ export type TimelineEditOverrides = Pick<
+@@ -12,6 +12,10 @@ export type TimelineEditOverrides = Pick<
    | "onResizeElements"
    | "onBlockedEditAttempt"
    | "onSplitElement"
@@ -51,7 +147,9 @@ diff --git a/src/player/components/useResolvedTimelineEditCallbacks.ts b/src/pla
 +  | "onMoveKeyframeToPlayhead"
 +  | "onMoveKeyframe"
  >;
-@@ -29,4 +33,8 @@ export function useResolvedTimelineEditCallbacks(
+ 
+ // Merge any prop overrides over the context callbacks. Used so NLELayout can
+@@ -28,6 +32,10 @@ export function useResolvedTimelineEditCallbacks(
      onResizeElements,
      onBlockedEditAttempt,
      onSplitElement,
@@ -60,7 +158,9 @@ diff --git a/src/player/components/useResolvedTimelineEditCallbacks.ts b/src/pla
 +    onMoveKeyframeToPlayhead,
 +    onMoveKeyframe,
    } = overrides;
-@@ -42,4 +50,9 @@ export function useResolvedTimelineEditCallbacks(
+   return useMemo(
+     () => ({
+@@ -38,6 +46,11 @@ export function useResolvedTimelineEditCallbacks(
        onResizeElements: onResizeElements ?? ctx.onResizeElements,
        onBlockedEditAttempt: onBlockedEditAttempt ?? ctx.onBlockedEditAttempt,
        onSplitElement: onSplitElement ?? ctx.onSplitElement,
@@ -70,7 +170,9 @@ diff --git a/src/player/components/useResolvedTimelineEditCallbacks.ts b/src/pla
 +        onMoveKeyframeToPlayhead ?? ctx.onMoveKeyframeToPlayhead,
 +      onMoveKeyframe: onMoveKeyframe ?? ctx.onMoveKeyframe,
      }),
-@@ -55,6 +68,10 @@ export function useResolvedTimelineEditCallbacks(
+     [
+       ctx,
+@@ -47,6 +60,10 @@ export function useResolvedTimelineEditCallbacks(
        onResizeElements,
        onBlockedEditAttempt,
        onSplitElement,
@@ -81,87 +183,16 @@ diff --git a/src/player/components/useResolvedTimelineEditCallbacks.ts b/src/pla
      ],
    );
  }
-diff --git a/src/player/components/Timeline.tsx b/src/player/components/Timeline.tsx
---- a/src/player/components/Timeline.tsx
-+++ b/src/player/components/Timeline.tsx
-@@ -79,4 +79,8 @@ export const Timeline = memo(function Timeline({
-   onResizeElements: onResizeElementsOverride,
-   onBlockedEditAttempt: onBlockedEditAttemptOverride,
-   onSplitElement: onSplitElementOverride,
-+  onDeleteKeyframe: onDeleteKeyframeOverride,
-+  onDeleteAllKeyframes: onDeleteAllKeyframesOverride,
-+  onMoveKeyframeToPlayhead: onMoveKeyframeToPlayheadOverride,
-+  onMoveKeyframe: onMoveKeyframeOverride,
-   onSelectElement,
-@@ -102,4 +106,8 @@ export const Timeline = memo(function Timeline({
-     onResizeElements: onResizeElementsOverride,
-     onBlockedEditAttempt: onBlockedEditAttemptOverride,
-     onSplitElement: onSplitElementOverride,
-+    onDeleteKeyframe: onDeleteKeyframeOverride,
-+    onDeleteAllKeyframes: onDeleteAllKeyframesOverride,
-+    onMoveKeyframeToPlayhead: onMoveKeyframeToPlayheadOverride,
-+    onMoveKeyframe: onMoveKeyframeOverride,
-   });
-diff --git a/dist/index.d.ts b/dist/index.d.ts
---- a/dist/index.d.ts
-+++ b/dist/index.d.ts
-@@ -769,3 +769,7 @@ interface TimelineProps extends TimelineDropCallbacks, TimelineEditOverrides {
-     /** Project-scoped reset boundary; soft source refreshes retain the same epoch. */
-     sessionEpoch?: number;
-+    onDeleteKeyframe?: TimelineEditCallbacks["onDeleteKeyframe"];
-+    onDeleteAllKeyframes?: TimelineEditCallbacks["onDeleteAllKeyframes"];
-+    onMoveKeyframeToPlayhead?: TimelineEditCallbacks["onMoveKeyframeToPlayhead"];
-+    onMoveKeyframe?: TimelineEditCallbacks["onMoveKeyframe"];
-     onSeek?: (time: number) => void;
-diff --git a/dist/index.js b/dist/index.js
---- a/dist/index.js
-+++ b/dist/index.js
-@@ -21770,4 +21770,8 @@ function useResolvedTimelineEditCallbacks(overrides) {
-     onResizeElements,
-     onBlockedEditAttempt,
--    onSplitElement
-+    onSplitElement,
-+    onDeleteKeyframe,
-+    onDeleteAllKeyframes,
-+    onMoveKeyframeToPlayhead,
-+    onMoveKeyframe
-   } = overrides;
-@@ -21781,4 +21785,8 @@ function useResolvedTimelineEditCallbacks(overrides) {
-       onResizeElements: onResizeElements ?? ctx3.onResizeElements,
-       onBlockedEditAttempt: onBlockedEditAttempt ?? ctx3.onBlockedEditAttempt,
--      onSplitElement: onSplitElement ?? ctx3.onSplitElement
-+      onSplitElement: onSplitElement ?? ctx3.onSplitElement,
-+      onDeleteKeyframe: onDeleteKeyframe ?? ctx3.onDeleteKeyframe,
-+      onDeleteAllKeyframes: onDeleteAllKeyframes ?? ctx3.onDeleteAllKeyframes,
-+      onMoveKeyframeToPlayhead: onMoveKeyframeToPlayhead ?? ctx3.onMoveKeyframeToPlayhead,
-+      onMoveKeyframe: onMoveKeyframe ?? ctx3.onMoveKeyframe
-     }),
-@@ -21790,4 +21798,8 @@ function useResolvedTimelineEditCallbacks(overrides) {
-       onResizeElements,
-       onBlockedEditAttempt,
--      onSplitElement
-+      onSplitElement,
-+      onDeleteKeyframe,
-+      onDeleteAllKeyframes,
-+      onMoveKeyframeToPlayhead,
-+      onMoveKeyframe
-     ]
-@@ -22941,4 +22953,8 @@ var Timeline = memo16(function Timeline2({
-   onResizeElements: onResizeElementsOverride,
-   onBlockedEditAttempt: onBlockedEditAttemptOverride,
-   onSplitElement: onSplitElementOverride,
-+  onDeleteKeyframe: onDeleteKeyframeOverride,
-+  onDeleteAllKeyframes: onDeleteAllKeyframesOverride,
-+  onMoveKeyframeToPlayhead: onMoveKeyframeToPlayheadOverride,
-+  onMoveKeyframe: onMoveKeyframeOverride,
-   onSelectElement,
-@@ -22964,4 +22980,8 @@ var Timeline = memo16(function Timeline2({
-     onResizeElements: onResizeElementsOverride,
-     onBlockedEditAttempt: onBlockedEditAttemptOverride,
--    onSplitElement: onSplitElementOverride
-+    onSplitElement: onSplitElementOverride,
-+    onDeleteKeyframe: onDeleteKeyframeOverride,
-+    onDeleteAllKeyframes: onDeleteAllKeyframesOverride,
-+    onMoveKeyframeToPlayhead: onMoveKeyframeToPlayheadOverride,
-+    onMoveKeyframe: onMoveKeyframeOverride
-   });
+diff --git a/src/player/lib/thumbnailPolicy.ts b/src/player/lib/thumbnailPolicy.ts
+index 7630784fca37f57016e5bec186de81a5638e8482..24654c023fccf67a2c011968eacebe282ae7ea4d 100644
+--- a/src/player/lib/thumbnailPolicy.ts
++++ b/src/player/lib/thumbnailPolicy.ts
+@@ -4,7 +4,7 @@ export type ThumbnailRuntimePolicy = "follow-preference" | "force-hidden" | "leg
+ // "Adaptive" currently means the scheduler pauses rich work while scrolling.
+ // The mode name leaves room for finer-grained runtime heuristics later.
+ 
+-const rawPolicy = import.meta.env.VITE_STUDIO_TIMELINE_THUMBNAIL_POLICY;
++const rawPolicy = import.meta.env?.VITE_STUDIO_TIMELINE_THUMBNAIL_POLICY;
+ 
+ const studioThumbnailRuntimePolicy: ThumbnailRuntimePolicy =
+   rawPolicy === "force-hidden" || rawPolicy === "legacy-default" ? rawPolicy : "follow-preference";
