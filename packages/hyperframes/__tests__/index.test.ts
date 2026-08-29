@@ -31,6 +31,24 @@ describe("extractHtml", () => {
 		);
 	});
 
+	test("accepts a complete document without a doctype", () => {
+		const withoutDoctype = sample("no-doctype").replace("<!DOCTYPE html>", "");
+		expect(extractHtml(`Updated scene:\n${withoutDoctype}`)).toContain(
+			'data-composition-id="no-doctype"',
+		);
+	});
+
+	test("recovers entity-escaped composition markup", () => {
+		const escaped = sample("escaped")
+			.replaceAll("&", "&amp;")
+			.replaceAll("<", "&lt;")
+			.replaceAll(">", "&gt;")
+			.replaceAll('"', "&quot;");
+		expect(extractHtml(`\`\`\`html\n${escaped}\n\`\`\``)).toContain(
+			'data-composition-id="escaped"',
+		);
+	});
+
 	test("returns null without the marker", () => {
 		expect(extractHtml("\`\`\`html\n<html></html>\n\`\`\`")).toBeNull();
 	});
@@ -92,6 +110,49 @@ describe("prompt + seed", () => {
 		expect(seed).toContain('tl.from("#s1 h1"');
 		expect(seed).not.toContain("rootSel");
 		expect(prompt).not.toContain("${");
+	});
+
+	test("selected web images use a local-materialization placeholder", () => {
+		const prompt = buildAgentPrompt({
+			request: "Use a real photo of Mount Fuji",
+			compositionId: "image-scene",
+			durationSecs: 5,
+			width: 1920,
+			height: 1080,
+			fps: 30,
+			selectedImage: {
+				name: "Mount Fuji",
+				placeholder: "opencut-selected-image://abc123",
+				sourcePageUrl: "https://commons.wikimedia.org/wiki/File:Fuji.jpg",
+				attribution: "Example Author — CC BY-SA",
+				license: "CC BY-SA",
+				width: 2400,
+				height: 1600,
+			},
+		});
+		expect(prompt).toContain(
+			"exact HTML src: opencut-selected-image://abc123",
+		);
+		expect(prompt).toContain("Never use the remote source URL in HTML");
+		expect(prompt).toContain("Example Author — CC BY-SA");
+	});
+
+	test("existing scenes demand a complete updated document", () => {
+		const currentComposition = sample("existing-scene");
+		const prompt = buildAgentPrompt({
+			request: "Make the title red",
+			compositionId: "existing-scene",
+			durationSecs: 3,
+			width: 1920,
+			height: 1080,
+			fps: 30,
+			currentComposition,
+		});
+		expect(prompt).toContain("Update the selected existing HyperFrames");
+		expect(prompt).toContain("Existing composition source");
+		expect(prompt).toContain(currentComposition);
+		expect(prompt).toContain("Return the COMPLETE updated standalone HTML");
+		expect(prompt).not.toContain("Create ONE NEW HyperFrames");
 	});
 });
 

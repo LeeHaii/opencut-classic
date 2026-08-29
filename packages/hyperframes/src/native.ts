@@ -70,6 +70,42 @@ export interface AgentChunkPayload {
 	chunk: string;
 }
 
+export interface WebImageCandidate {
+	id: string;
+	title: string;
+	thumbnailUrl: string;
+	sourceUrl: string;
+	sourcePageUrl: string;
+	width: number;
+	height: number;
+	mimeType: string;
+	author: string;
+	license: string;
+	attribution: string;
+}
+
+export interface WebImageSearchResult {
+	searchId: string;
+	query: string;
+	candidates: WebImageCandidate[];
+}
+
+export interface WebImageAsset {
+	id: string;
+	name: string;
+	dataUrl: string;
+	internalUrl: string;
+	placeholder: string;
+	sourcePageUrl: string;
+	width: number;
+	height: number;
+	mimeType: string;
+	author: string;
+	license: string;
+	attribution: string;
+	sha256: string;
+}
+
 export interface HfRenderRequest {
 	jobId: string;
 	projectId: string;

@@ -3,6 +3,7 @@ pub mod doctor;
 pub mod render;
 pub mod settings;
 pub mod studio;
+pub mod web_images;
 
 use serde::Serialize;
 use tauri::Manager;

@@ -13,6 +13,18 @@ export interface PromptContext {
 	recentTurns?: AgentChatMessage[];
 	/** Absolute paths of reference images copied into the agent workspace. */
 	referenceImages?: string[];
+	/** An image selected for composition use and frozen by the desktop host. */
+	selectedImage?: {
+		name: string;
+		placeholder: string;
+		sourcePageUrl: string;
+		attribution: string;
+		license: string;
+		width: number;
+		height: number;
+	};
+	/** Full source of the selected composition when this turn updates a scene. */
+	currentComposition?: string;
 }
 
 const MAX_TURNS = 6;
@@ -33,6 +45,8 @@ export function buildAgentPrompt(context: PromptContext): string {
 		fps,
 		recentTurns = [],
 		referenceImages = [],
+		selectedImage,
+		currentComposition,
 	} = context;
 
 	const history =
@@ -50,8 +64,27 @@ export function buildAgentPrompt(context: PromptContext): string {
 					.map((p) => `- ${p}`)
 					.join("\n")}\n`
 			: "";
+	const selectedImageInstructions = selectedImage
+		? `\nSelected and frozen image (use it as actual composition media, not only as style inspiration):
+- name: ${selectedImage.name}
+- exact HTML src: ${selectedImage.placeholder}
+${selectedImage.sourcePageUrl ? `- source page: ${selectedImage.sourcePageUrl}\n` : ""}- attribution: ${selectedImage.attribution}
+- license: ${selectedImage.license}
+- dimensions: ${selectedImage.width}x${selectedImage.height}
+Use the exact HTML src above in an <img> element. OpenCut replaces this placeholder with the frozen local file after generation. Never use the remote source URL in HTML.\n`
+		: "";
+	const currentCompositionInstructions = currentComposition?.trim()
+		? `\nExisting composition source (this is the source of truth to edit):
+\`\`\`html
+${currentComposition}
+\`\`\`
+Return the COMPLETE updated standalone HTML document, including every unchanged part. A summary, patch, diff, fragment, or claim that a file was edited is not a valid response.\n`
+		: "";
+	const objective = currentComposition?.trim()
+		? "Update the selected existing HyperFrames child composition to fulfil the user's latest request."
+		: "Create ONE NEW HyperFrames child composition that fulfils the user's request.";
 
-	return `You are the motion-design agent inside OpenCut. Create ONE NEW HyperFrames child composition that fulfils the user's request.
+	return `You are the motion-design agent inside OpenCut. ${objective}
 
 Hard requirements:
 - Return a complete standalone HTML document inside one \`\`\`html code fence.
@@ -65,11 +98,13 @@ Hard requirements:
 - Do not create a master timeline and do not use data-composition-src. Return only the new self-contained child animation.
 - The composition plays at ${fps} fps; keep all timing in whole seconds or clean fractions that align to ${fps} fps frames.
 - Keep the exact child duration ${durationSecs} seconds. Do not shorten or extend it.
+- Always return the complete resulting HTML document, even when the requested update is small. Never return only an explanation, code fragment, or diff.
 - Preserve any existing local media URL exactly unless the user asks to remove it. Local media uses ${"opencut-media://local/..."} URLs — reference them as-is.
+- When a selected and frozen image is listed below, inspect the attached reference and use its exact placeholder as the HTML img src. Never substitute another URL.
 - Do not use shell commands, network APIs, cookies, localStorage, sessionStorage, the parent window or desktop APIs. CDN script tags are allowed.
 - Filesystem access is restricted to view_file on the exact reference files listed below. Never use find_by_name/grep_search/run_command and never search outside the workspace.
 - 	Before the html fence, give a concise one-sentence summary of what you made. Do not output a diff.
-${references}${history}
+${references}${selectedImageInstructions}${history}${currentCompositionInstructions}
 ${buildMotionDesignSkills(durationSecs)}
 User request: ${request}`;
 }

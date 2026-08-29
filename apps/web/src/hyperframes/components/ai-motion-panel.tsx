@@ -13,6 +13,7 @@ import {
 	ExternalLink,
 	Film,
 	ImagePlus,
+	Images,
 	Layers,
 	SendHorizontal,
 	Sparkles,
@@ -45,6 +46,8 @@ import {
 	type AgentChatMessage,
 	type AgentDonePayload,
 	type AntigravityStatus,
+	type WebImageAsset,
+	type WebImageSearchResult,
 } from "@opencut/hyperframes";
 import { buildHyperframesElement } from "@/timeline/element-utils";
 import {
@@ -77,6 +80,11 @@ interface NativeRenderStatus {
 	hyperframes_cli: { found: boolean; version?: string };
 }
 
+interface PendingWebImageSearch {
+	request: string;
+	result: WebImageSearchResult;
+}
+
 export function AiMotionPanelView() {
 	const editor = useEditor();
 	const [project, tracks] = useEditor(
@@ -95,6 +103,10 @@ export function AiMotionPanelView() {
 	);
 	const [nativeRenderStatus, setNativeRenderStatus] =
 		useState<NativeRenderStatus | null>(null);
+	const [pendingWebImageSearch, setPendingWebImageSearch] =
+		useState<PendingWebImageSearch | null>(null);
+	const [imageActivity, setImageActivity] = useState<string | null>(null);
+	const [ingestingImageId, setIngestingImageId] = useState<string | null>(null);
 	const browserRuns = useRef(new Map<string, AbortController>());
 
 	const native = isNative();
@@ -171,9 +183,11 @@ export function AiMotionPanelView() {
 	const handleSend = async ({
 		request,
 		images = [],
+		webImage,
 	}: {
 		request: string;
 		images?: string[];
+		webImage?: WebImageAsset;
 	}) => {
 		const entry = resolvedActiveElementId
 			? findEntry({ editor, elementId: resolvedActiveElementId })
@@ -206,11 +220,6 @@ export function AiMotionPanelView() {
 							fps,
 						},
 					)}\n\`\`\`\n`;
-		const current =
-			element.html.trim().length > 0
-				? `\nCurrent composition source:\n\`\`\`html\n${element.html}\n\`\`\`\n`
-				: "";
-
 		const prompt = `${buildAgentPrompt({
 			request,
 			compositionId: element.compositionId,
@@ -219,12 +228,39 @@ export function AiMotionPanelView() {
 			height: element.height,
 			fps,
 			recentTurns: chats.slice(-6),
-		})}${seed}${current}`;
+			...(element.html.trim().length > 0
+				? { currentComposition: element.html }
+				: {}),
+			...(webImage
+				? {
+						selectedImage: {
+							name: webImage.name,
+							placeholder: webImage.placeholder,
+							sourcePageUrl: webImage.sourcePageUrl,
+							attribution: webImage.attribution,
+							license: webImage.license,
+							width: webImage.width,
+							height: webImage.height,
+						},
+					}
+				: {}),
+		})}${seed}`;
 
 		const requestId = newId();
 		store.setRun({
 			elementId: element.id,
-			run: { running: true, requestId },
+			run: {
+				running: true,
+				requestId,
+				...(webImage
+					? {
+							selectedImage: {
+								placeholder: webImage.placeholder,
+								internalUrl: webImage.internalUrl,
+							},
+						}
+					: {}),
+			},
 		});
 		try {
 			if (native) {
@@ -249,7 +285,10 @@ export function AiMotionPanelView() {
 				images,
 				signal: controller.signal,
 			});
-			const html = extractHtml(text);
+			const extracted = extractHtml(text);
+			const html = extracted
+				? materializeSelectedImage({ html: extracted, webImage })
+				: null;
 			const info = html ? quickValidate(html) : null;
 			store.appendChat({
 				elementId: element.id,
@@ -310,6 +349,103 @@ export function AiMotionPanelView() {
 				browserRuns.current.delete(element.id);
 				store.setRun({ elementId: element.id, run: { running: false } });
 			}
+		}
+	};
+
+	const handlePromptSubmit = async ({
+		value,
+		images,
+	}: {
+		value: string;
+		images: string[];
+	}) => {
+		const entry = activeEntry;
+		if (!entry || !project) return;
+		if (!native) {
+			await handleSend({ request: value, images });
+			return;
+		}
+		if (images.length > 0) {
+			setImageActivity("Preparing attached image for the composition…");
+			try {
+				const selectedImage = await nativeInvoke<WebImageAsset | null>(
+					"hf_image_ingest_attachment",
+					{
+						request: {
+							projectId: project.metadata.id,
+							elementId: entry.element.id,
+							userPrompt: value,
+							dataUrl: images[0],
+							name: "Attached image",
+						},
+					},
+				);
+				await handleSend({
+					request: value,
+					images,
+					...(selectedImage ? { webImage: selectedImage } : {}),
+				});
+			} catch (error) {
+				toast.error("Could not prepare the attached image", {
+					description: errorMessage(error),
+				});
+			} finally {
+				setImageActivity(null);
+			}
+			return;
+		}
+		setImageActivity("Searching Wikimedia Commons for image candidates…");
+		try {
+			const result = await nativeInvoke<WebImageSearchResult | null>(
+				"hf_image_search",
+				{
+					request: {
+						projectId: project.metadata.id,
+						elementId: entry.element.id,
+						userPrompt: value,
+						limit: 8,
+					},
+				},
+			);
+			if (result) {
+				setPendingWebImageSearch({ request: value, result });
+				return;
+			}
+			await handleSend({ request: value, images });
+		} catch (error) {
+			toast.error("Image search failed", { description: errorMessage(error) });
+		} finally {
+			setImageActivity(null);
+		}
+	};
+
+	const selectWebImage = async (candidateId: string) => {
+		const pending = pendingWebImageSearch;
+		const entry = activeEntry;
+		if (!pending || !entry || !project || ingestingImageId) return;
+		setIngestingImageId(candidateId);
+		try {
+			const webImage = await nativeInvoke<WebImageAsset>("hf_image_ingest", {
+				request: {
+					projectId: project.metadata.id,
+					elementId: entry.element.id,
+					userPrompt: pending.request,
+					searchId: pending.result.searchId,
+					candidateId,
+				},
+			});
+			setPendingWebImageSearch(null);
+			await handleSend({
+				request: pending.request,
+				images: [webImage.dataUrl],
+				webImage,
+			});
+		} catch (error) {
+			toast.error("Could not use this image", {
+				description: errorMessage(error),
+			});
+		} finally {
+			setIngestingImageId(null);
 		}
 	};
 
@@ -402,10 +538,30 @@ export function AiMotionPanelView() {
 				([, run]) => run.requestId === payload.requestId,
 			);
 			if (!entry) return;
-			const [elementId] = entry;
+			const [elementId, runState] = entry;
 			state.setRun({ elementId, run: { running: false } });
 
-			const html = extractHtml(payload.text);
+			const extracted = extractHtml(payload.text);
+			let html = extracted;
+			if (html && runState.selectedImage) {
+				if (!html.includes(runState.selectedImage.placeholder)) {
+					state.appendChat({
+						elementId,
+						message: {
+							id: newId(),
+							role: "system",
+							text: "The generated scene did not use the selected image. Try again and ask the agent to use the provided image as composition media.",
+							createdAt: new Date().toISOString(),
+						},
+					});
+					html = null;
+				} else {
+					html = html.replaceAll(
+						runState.selectedImage.placeholder,
+						runState.selectedImage.internalUrl,
+					);
+				}
+			}
 			const info = html ? quickValidate(html) : null;
 
 			state.appendChat({
@@ -424,7 +580,9 @@ export function AiMotionPanelView() {
 					message: {
 						id: newId(),
 						role: "system",
-						text: "The reply did not contain a valid HyperFrames composition. Try rephrasing.",
+						text: html
+							? "The AI returned incomplete composition HTML, so the existing scene was left unchanged. Try the update again."
+							: "The AI returned an explanation instead of the complete updated composition, so the existing scene was left unchanged. Try the update again.",
 						createdAt: new Date().toISOString(),
 					},
 				});
@@ -782,11 +940,32 @@ export function AiMotionPanelView() {
 						)}
 
 						<PromptInput
-							disabled={run?.running || (native && !status?.installed)}
+							disabled={
+								run?.running ||
+								Boolean(imageActivity) ||
+								Boolean(pendingWebImageSearch) ||
+								(native && !status?.installed)
+							}
 							onSubmit={({ value, images }) =>
-								void handleSend({ request: value, images })
+								void handlePromptSubmit({ value, images })
 							}
 						/>
+
+						{imageActivity && (
+							<div className="border-primary/20 bg-primary/5 text-muted-foreground flex items-center gap-2 rounded-md border px-2 py-1.5 text-[10px]">
+								<Spinner className="size-3" />
+								{imageActivity}
+							</div>
+						)}
+
+						{pendingWebImageSearch && (
+							<WebImageContactSheet
+								search={pendingWebImageSearch.result}
+								ingestingImageId={ingestingImageId}
+								onSelect={(candidateId) => void selectWebImage(candidateId)}
+								onCancel={() => setPendingWebImageSearch(null)}
+							/>
+						)}
 
 						{nativeActionError && (
 							<div className="border-destructive/25 bg-destructive/8 text-destructive flex gap-1.5 rounded-md border px-2 py-1.5 text-[10px] leading-relaxed">
@@ -1176,6 +1355,84 @@ function PromptInput({
 	);
 }
 
+function WebImageContactSheet({
+	search,
+	ingestingImageId,
+	onSelect,
+	onCancel,
+}: {
+	search: WebImageSearchResult;
+	ingestingImageId: string | null;
+	onSelect: (candidateId: string) => void;
+	onCancel: () => void;
+}) {
+	return (
+		<div className="border-border/60 bg-muted/20 overflow-hidden rounded-lg border">
+			<div className="border-border/60 flex items-start justify-between gap-2 border-b px-2.5 py-2">
+				<div className="min-w-0">
+					<div className="flex items-center gap-1.5 text-[10px] font-medium">
+						<Images className="text-primary size-3" />
+						Choose a web image
+					</div>
+					<p className="text-muted-foreground mt-0.5 truncate text-[9px]">
+						{search.candidates.length} validated Wikimedia candidates for “
+						{search.query}”
+					</p>
+				</div>
+				<Button
+					type="button"
+					variant="ghost"
+					size="icon"
+					className="size-6 shrink-0"
+					disabled={Boolean(ingestingImageId)}
+					onClick={onCancel}
+					aria-label="Cancel image selection"
+				>
+					<X className="size-3" />
+				</Button>
+			</div>
+			<div className="grid max-h-72 grid-cols-2 gap-1.5 overflow-y-auto p-2">
+				{search.candidates.map((candidate) => (
+					<button
+						key={candidate.id}
+						type="button"
+						className="border-border/60 bg-background hover:border-primary/60 overflow-hidden rounded-md border text-left transition-colors disabled:opacity-60"
+						disabled={Boolean(ingestingImageId)}
+						onClick={() => onSelect(candidate.id)}
+						title={`${candidate.title}\n${candidate.attribution}`}
+					>
+						<div className="bg-muted relative aspect-video">
+							{/* Remote search previews are intentionally not optimized or proxied. */}
+							{/* eslint-disable-next-line @next/next/no-img-element */}
+							<img
+								src={candidate.thumbnailUrl}
+								alt={candidate.title}
+								className="size-full object-cover"
+								referrerPolicy="no-referrer"
+							/>
+							{ingestingImageId === candidate.id && (
+								<div className="absolute inset-0 flex items-center justify-center bg-black/60">
+									<Spinner className="size-4 text-white" />
+								</div>
+							)}
+						</div>
+						<div className="space-y-0.5 p-1.5">
+							<p className="truncate text-[9px] font-medium">{candidate.title}</p>
+							<p className="text-muted-foreground truncate text-[8px]">
+								{candidate.width}×{candidate.height} · {candidate.license}
+							</p>
+						</div>
+					</button>
+				))}
+			</div>
+			<p className="border-border/60 text-muted-foreground border-t px-2.5 py-1.5 text-[8px] leading-relaxed">
+				The selected original is validated, frozen locally, and recorded with
+				its source and license before AI Motion uses it.
+			</p>
+		</div>
+	);
+}
+
 // --- Helpers -----------------------------------------------------------------
 
 function findEntry({
@@ -1247,6 +1504,22 @@ function warnIfStatic({
 
 function errorMessage(error: unknown): string {
 	return error instanceof Error ? error.message : String(error);
+}
+
+function materializeSelectedImage({
+	html,
+	webImage,
+}: {
+	html: string;
+	webImage?: WebImageAsset;
+}): string {
+	if (!webImage) return html;
+	if (!html.includes(webImage.placeholder)) {
+		throw new Error(
+			"The generated scene did not use the selected image. Try again and explicitly ask the agent to use the provided image as composition media.",
+		);
+	}
+	return html.replaceAll(webImage.placeholder, webImage.internalUrl);
 }
 
 // --- Scene naming & length ----------------------------------------------------

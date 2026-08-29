@@ -1,5 +1,5 @@
 /** Minimum Antigravity CLI version OpenCut supports (matches upstream). */
-export const MIN_ANTIGRAVITY_VERSION = "1.1.7";
+export const MIN_ANTIGRAVITY_VERSION = "1.1.15";
 
 /**
  * Seed model list shown before the first successful status probe refreshes

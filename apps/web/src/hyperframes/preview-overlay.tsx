@@ -4,6 +4,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
 	PARENT_MESSAGE_SOURCE,
 	PREVIEW_MESSAGE_SOURCE,
+	isNative,
+	nativeInvoke,
 	preparePreviewHtml,
 } from "@opencut/hyperframes";
 import { getElementLocalTime } from "@/animation";
@@ -116,10 +118,58 @@ function HyperframesPreview({
 	const selectedLayerSelector = useHyperframesStudioStore(
 		(state) => state.selectedLayerSelector,
 	);
-	const preparedHtml = useMemo(
+	const projectId = editor.project.getActiveOrNull()?.metadata.id;
+	const basePreparedHtml = useMemo(
 		() => preparePreviewHtml(element.html),
 		[element.html],
 	);
+	const [resolvedMediaHtml, setResolvedMediaHtml] = useState<{
+		source: string;
+		html: string;
+	} | null>(null);
+	const preparedHtml =
+		resolvedMediaHtml?.source === element.html
+			? resolvedMediaHtml.html
+			: basePreparedHtml;
+	useEffect(() => {
+		let cancelled = false;
+		if (
+			!isNative() ||
+			!projectId ||
+			!element.html.includes("opencut-media://local/")
+		) {
+			return () => {
+				cancelled = true;
+			};
+		}
+		void nativeInvoke<string>("hf_media_resolve", {
+			request: {
+				projectId,
+				elementId: element.id,
+				html: element.html,
+			},
+		})
+			.then((resolved) => {
+				if (!cancelled) {
+					setResolvedMediaHtml({
+						source: element.html,
+						html: preparePreviewHtml(resolved),
+					});
+				}
+			})
+			.catch((reason: unknown) => {
+				if (!cancelled) {
+					setError(
+						reason instanceof Error
+							? reason.message
+							: "Could not load local AI Motion media",
+					);
+				}
+			});
+		return () => {
+			cancelled = true;
+		};
+	}, [element.html, element.id, projectId]);
 	useEffect(() => {
 		if (isStudio) setRuntimeMotion(null);
 	}, [isStudio, preparedHtml, setRuntimeMotion]);

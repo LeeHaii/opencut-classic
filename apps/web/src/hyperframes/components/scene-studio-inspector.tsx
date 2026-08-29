@@ -14,15 +14,22 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import {
+	Select,
+	SelectContent,
+	SelectItem,
+	SelectTrigger,
+	SelectValue,
+} from "@/components/ui/select";
 import { cn } from "@/utils/ui";
 import {
+	addStudioEditableAnimation,
 	addStudioKeyframe,
 	convertStudioAnimationToKeyframes,
 	getStudioAnimationSummary,
 	getStudioLayerAnimations,
 	interpolateStudioKeyframeProperties,
 	moveStudioKeyframe,
-	removeStudioKeyframe,
 	scaleStudioLayerAnimations,
 	shiftStudioLayerAnimations,
 	studioTweenPercentageForClipPercentage,
@@ -43,6 +50,19 @@ import { useHyperframesStudioStore } from "../studio-store";
 import { useActiveStudioElement } from "../use-studio-element";
 
 type InspectorTab = "design" | "motion";
+
+const STUDIO_EASES = [
+	{ value: "none", label: "Linear" },
+	{ value: "power1.in", label: "Ease in" },
+	{ value: "power1.out", label: "Ease out" },
+	{ value: "power1.inOut", label: "Ease in/out" },
+	{ value: "power2.in", label: "Strong in" },
+	{ value: "power2.out", label: "Strong out" },
+	{ value: "power2.inOut", label: "Strong in/out" },
+	{ value: "sine.inOut", label: "Smooth" },
+	{ value: "expo.out", label: "Fast settle" },
+	{ value: "back.out(1.4)", label: "Overshoot" },
+] as const;
 
 function layerFromPreview({
 	selection,
@@ -754,11 +774,30 @@ function MotionInspector({
 							<span className="truncate text-[11px] font-medium capitalize">
 								{animation.propertyGroup}
 							</span>
-							<span className="text-muted-foreground text-[9px]">runtime</span>
+							<span className="text-muted-foreground text-[9px]">
+								Generated · read only
+							</span>
 						</div>
-						<p className="text-muted-foreground mt-1 font-mono text-[9px]">
-							{animation.start.toFixed(2)}s · {animation.duration.toFixed(2)}s
-						</p>
+						<div className="mt-1 flex items-center justify-between gap-2">
+							<p className="text-muted-foreground font-mono text-[9px]">
+								{animation.start.toFixed(2)}s · {animation.duration.toFixed(2)}s
+							</p>
+							<Button
+								variant="ghost"
+								size="sm"
+								className="h-6 px-2 text-[9px]"
+								disabled={animation.keyframes.length < 2}
+								onClick={() =>
+									void addStudioEditableAnimation({
+										html,
+										layer,
+										animation,
+									}).then(onCommit)
+								}
+							>
+								Create editable copy
+							</Button>
+						</div>
 					</div>
 				))}
 			</Section>
@@ -783,6 +822,11 @@ function MotionInspector({
 							key={`${keyframe.animationId}:${keyframe.percentage}`}
 							html={html}
 							keyframe={keyframe}
+							hasPreviousKeyframe={animationData.keyframes.some(
+								(candidate) =>
+									candidate.animationId === keyframe.animationId &&
+									candidate.percentage < keyframe.percentage,
+							)}
 							onCommit={onCommit}
 						/>
 					))
@@ -795,13 +839,18 @@ function MotionInspector({
 function KeyframeEditor({
 	html,
 	keyframe,
+	hasPreviousKeyframe,
 	onCommit,
 }: {
 	html: string;
 	keyframe: StudioAnimationKeyframe;
+	hasPreviousKeyframe: boolean;
 	onCommit: (html: string) => void;
 }) {
 	const [expanded, setExpanded] = useState(false);
+	const hasListedEase = STUDIO_EASES.some(
+		(option) => option.value === keyframe.ease,
+	);
 	return (
 		<div className="bg-muted/30 overflow-hidden rounded-md">
 			<div className="flex items-center gap-1.5 px-2 py-1.5">
@@ -844,26 +893,45 @@ function KeyframeEditor({
 					}}
 				/>
 				<span className="text-muted-foreground text-[9px]">%</span>
-				<Button
-					variant="ghost"
-					size="icon"
-					className="text-destructive size-7"
-					disabled={keyframe.editability === "source"}
-					onClick={() =>
-						void removeStudioKeyframe({
-							html,
-							animationId: keyframe.animationId,
-							percentage: keyframe.percentage,
-							convertFlat: keyframe.synthesized,
-						}).then(onCommit)
-					}
-					aria-label="Delete keyframe"
-				>
-					<Trash2 className="size-3" />
-				</Button>
 			</div>
 			{expanded && (
 				<div className="border-border/50 space-y-1.5 border-t px-2 py-2">
+					{keyframe.editability !== "source" && hasPreviousKeyframe && (
+						<div className="flex items-center justify-between gap-2">
+							<span className="text-muted-foreground text-[10px]">
+								Curve from previous
+							</span>
+							<Select
+								value={keyframe.ease ?? "none"}
+								onValueChange={(ease) =>
+									void updateStudioKeyframe({
+										html,
+										animationId: keyframe.animationId,
+										percentage: keyframe.percentage,
+										properties: keyframe.properties,
+										ease: ease === "none" ? undefined : ease,
+										convertFlat: keyframe.synthesized,
+									}).then(onCommit)
+								}
+							>
+								<SelectTrigger size="sm" className="h-7 w-32 text-[10px]">
+									<SelectValue />
+								</SelectTrigger>
+								<SelectContent>
+									{keyframe.ease && !hasListedEase && (
+										<SelectItem value={keyframe.ease}>
+											{keyframe.ease}
+										</SelectItem>
+									)}
+									{STUDIO_EASES.map((ease) => (
+										<SelectItem key={ease.value} value={ease.value}>
+											{ease.label}
+										</SelectItem>
+									))}
+								</SelectContent>
+							</Select>
+						</div>
+					)}
 					{Object.entries(keyframe.properties).map(([property, value]) =>
 						keyframe.editability === "source" ? (
 							<div
