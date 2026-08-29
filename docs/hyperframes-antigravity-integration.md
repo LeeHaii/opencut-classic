@@ -13,7 +13,7 @@ We integrate three upstream technologies into OpenCut:
 |---|---|---|
 | **HyperFrames** (engine + CLI + `@hyperframes/player`) | HTML/CSS + `data-*` attributes → deterministic MP4 via headless Chrome + FFmpeg. Apache-2.0. | Authoring format for AI-generated motion scenes; local render engine; sandboxable preview player |
 | **HyperFrames Studio** (`hyperframes preview` server + web UI) | Browser-based composition editor served by the CLI | Power-user manual editing window for a composition, synced live to the timeline element |
-| **Antigravity CLI** (`agy`, Google, ≥1.1.7) | Headless coding-agent CLI (`--print --output-format stream-json`), owns OAuth in OS keychain | The agent that turns chat requests into self-contained HyperFrames HTML |
+| **Antigravity CLI** (`agy`, Google, ≥1.1.15) | Headless coding-agent CLI (`--print --input-format stream-json --output-format stream-json`), owns OAuth in OS keychain | The agent that turns chat requests into self-contained HyperFrames HTML |
 
 The reference implementation is **Gravity Frames Studio** (`E:\CodingFolder\hyperframes-antigravity-integration`), an Electron app that proves the whole loop. We port its proven contracts (CLI invocation, sandboxing, prompt template, master/child composition management) onto OpenCut's different architecture: a Next.js UI shell driven through a **Tauri v2** Rust core, with compositions becoming a **first-class timeline element type** rendered through OpenCut's existing WASM compositor + mediabunny/WebCodecs export.
 
@@ -35,7 +35,7 @@ Verified against source (`src/main/services/*`, `src/renderer/components/*`):
    ```
    - Spawned **without shell**, `windowsHide: true`; cwd = per-project agent workspace.
    - Env: clone of parent env with `AGY_CLI_HIDE_ACCOUNT_INFO` deleted (so account email/plan appear in output).
-   - Version gate ≥ 1.1.7; executable resolved via `ANTIGRAVITY_CLI_PATH` → `%LOCALAPPDATA%\agy\bin\agy.exe` (win) / `~/.local/bin/agy` (posix) → PATH lookup.
+   - Version gate ≥ 1.1.15 (required for streamed prompt input); executable resolved via `ANTIGRAVITY_CLI_PATH` → `%LOCALAPPDATA%\agy\bin\agy.exe` (win) / `~/.local/bin/agy` (posix) → PATH lookup.
    - Login: spawn interactive CLI detached (`child.unref()`), user completes Google Sign-In in its own terminal; app never sees tokens.
    - stream-json parsing: newline-delimited JSON events; scrape `conversation_id`/`session_id` (recursive key search), `usage` object, final text from keys matching `/^(text|content|result|response|output)$/i` preferring `result|final` typed events, else concatenated deltas, else plain lines.
    - Guards: duplicate-request rejection, 120,000-char prompt cap, 20-min watchdog, live stdout/stderr forwarding, cancel = kill child.

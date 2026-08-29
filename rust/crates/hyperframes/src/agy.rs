@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::time::Duration;
 
-pub const MINIMUM_VERSION: (u32, u32, u32) = (1, 1, 7);
+pub const MINIMUM_VERSION: (u32, u32, u32) = (1, 1, 15);
 pub const PRINT_TIMEOUT_MINUTES: u64 = 20;
 pub const MAX_PROMPT_CHARS: usize = 120_000;
 
@@ -35,15 +35,19 @@ pub struct AccountInfo {
     pub plan: Option<String>,
 }
 
-pub fn build_args(prompt: &str, conversation_id: Option<&str>, model: Option<&str>) -> Vec<String> {
+pub fn build_args(conversation_id: Option<&str>, model: Option<&str>) -> Vec<String> {
     let mut args = vec![
         "--dangerously-skip-permissions".to_string(),
-        "--print".to_string(),
-        prompt.to_string(),
+        "--input-format".to_string(),
+        "stream-json".to_string(),
         "--output-format".to_string(),
         "stream-json".to_string(),
         "--print-timeout".to_string(),
         format!("{PRINT_TIMEOUT_MINUTES}m"),
+        // An explicit empty value enables print mode without consuming the
+        // next flag as a command-line prompt. The real prompt is sent over
+        // stdin so Windows' process command-line limit never applies to it.
+        "--print=".to_string(),
     ];
     if let Some(id) = conversation_id.filter(|id| !id.trim().is_empty()) {
         args.push("--conversation".to_string());
@@ -54,6 +58,19 @@ pub fn build_args(prompt: &str, conversation_id: Option<&str>, model: Option<&st
         args.push(model.to_string());
     }
     args
+}
+
+/// Encodes one Antigravity stream-input user turn as NDJSON.
+pub fn build_stream_input(prompt: &str) -> String {
+    let mut input = serde_json::json!({
+        "event": "user",
+        "message": {
+            "content": prompt,
+        },
+    })
+    .to_string();
+    input.push('\n');
+    input
 }
 
 /// Resolves the agy executable without ever using a shell.
@@ -302,11 +319,22 @@ pub fn parse_stream_json(raw: &str) -> ParsedTurn {
         }
     }
 
+    let composition_from_result = finals
+        .iter()
+        .rev()
+        .find(|text| text.contains("data-composition-id"))
+        .cloned();
     let final_from_result = finals.iter().rev().find(|s| !s.trim().is_empty()).cloned();
     let joined_deltas = deltas.join("");
     let joined_plain = plain_lines.join("\n");
 
-    let (text, fallback_text) = if let Some(text) = final_from_result {
+    let (text, fallback_text) = if let Some(text) = composition_from_result {
+        (text, false)
+    } else if joined_deltas.contains("data-composition-id") {
+        (joined_deltas, false)
+    } else if joined_plain.contains("data-composition-id") {
+        (joined_plain, true)
+    } else if let Some(text) = final_from_result {
         (text, false)
     } else if !joined_deltas.trim().is_empty() {
         (joined_deltas, false)
@@ -405,23 +433,37 @@ mod tests {
 
     #[test]
     fn builds_expected_args() {
-        let args = build_args("hello", Some("conv-1"), Some("Gemini"));
+        let args = build_args(Some("conv-1"), Some("Gemini"));
         assert_eq!(
             args,
             vec![
                 "--dangerously-skip-permissions",
-                "--print",
-                "hello",
+                "--input-format",
+                "stream-json",
                 "--output-format",
                 "stream-json",
                 "--print-timeout",
                 "20m",
+                "--print=",
                 "--conversation",
                 "conv-1",
                 "--model",
                 "Gemini"
             ]
         );
+    }
+
+    #[test]
+    fn streams_long_prompts_without_putting_them_in_process_args() {
+        let prompt = "scene refinement ".repeat(8_000);
+        let args = build_args(None, None);
+        assert!(args.iter().all(|arg| !arg.contains(&prompt)));
+
+        let input = build_stream_input(&prompt);
+        assert!(input.ends_with('\n'));
+        let decoded: serde_json::Value = serde_json::from_str(input.trim_end()).unwrap();
+        assert_eq!(decoded["event"], "user");
+        assert_eq!(decoded["message"]["content"], prompt);
     }
 
     #[test]
@@ -437,6 +479,18 @@ mod tests {
         assert_eq!(turn.text, "final answer");
         assert_eq!(turn.conversation_id.as_deref(), Some("conv-abc123"));
         assert_eq!(turn.usage.unwrap()["credits"], 3);
+        assert!(!turn.fallback_text);
+    }
+
+    #[test]
+    fn prefers_composition_html_over_a_trailing_result_summary() {
+        let html = r#"<!DOCTYPE html><html><body><div data-composition-id="scene-1" data-duration="5"></div></body></html>"#;
+        let raw = format!(
+            "{{\"type\":\"result\",\"result\":{{\"text\":{},\"output\":\"Scene updated.\"}}}}",
+            serde_json::to_string(html).unwrap()
+        );
+        let turn = parse_stream_json(&raw);
+        assert_eq!(turn.text, html);
         assert!(!turn.fallback_text);
     }
 

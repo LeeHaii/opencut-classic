@@ -449,7 +449,7 @@ export function getStudioLayerAnimations({
 		diagnostics.push({
 			kind: "runtime-only",
 			message:
-				"This motion was discovered in the running preview. It is visible but must be edited in Source until it can be mapped to a literal tween.",
+				"This generated motion is read only. Create an editable copy to adjust its keys, timing, and curves without removing the original.",
 		});
 	}
 	if (
@@ -655,6 +655,138 @@ export async function moveStudioKeyframe({
 			);
 		},
 	});
+}
+
+/**
+ * Retime a keyframe from the scene timeline. Boundary keys resize the tween
+ * window while interior keys move within the existing window.
+ */
+export async function retimeStudioKeyframe({
+	html,
+	layer,
+	animationId,
+	fromPercentage,
+	toClipPercentage,
+}: {
+	html: string;
+	layer: StudioLayer;
+	animationId: string;
+	fromPercentage: number;
+	toClipPercentage: number;
+}): Promise<string> {
+	const animation = getStudioLayerAnimations({ html, layer }).animations.find(
+		(candidate) => candidate.id === animationId,
+	);
+	if (!animation) return html;
+	const authored = animation.keyframes?.keyframes;
+	const keyframes = [...(authored ?? synthesizeFlatTweenKeyframes(animation))].sort(
+		(a, b) => a.percentage - b.percentage,
+	);
+	if (keyframes.length < 2) return html;
+	const first = keyframes[0];
+	const last = keyframes[keyframes.length - 1];
+	if (!first || !last) return html;
+	const isFirst = Math.abs(first.percentage - fromPercentage) < 0.001;
+	const isLast = Math.abs(last.percentage - fromPercentage) < 0.001;
+	if (!isFirst && !isLast) {
+		const toPercentage = studioTweenPercentageForClipPercentage({
+			animation,
+			layer,
+			clipPercentage: toClipPercentage,
+		});
+		if (toPercentage == null) return html;
+		return moveStudioKeyframe({
+			html,
+			animationId,
+			fromPercentage,
+			toPercentage,
+			convertFlat: authored == null,
+		});
+	}
+
+	const oldPosition = animationStart(animation);
+	const oldDuration = Math.max(0.01, animation.duration ?? layer.duration);
+	const oldEnd = oldPosition + oldDuration;
+	const destination =
+		layer.start +
+			(layer.duration * clampPercentage(toClipPercentage)) / 100;
+	const newPosition = isFirst
+		? Math.min(destination, oldEnd - 0.01)
+		: oldPosition;
+	const newEnd = isLast
+		? Math.max(destination, oldPosition + 0.01)
+		: oldEnd;
+	const newDuration = Math.max(0.01, newEnd - newPosition);
+	const pctRemap = keyframes.map((keyframe) => ({
+		from: keyframe.percentage,
+		to:
+			isFirst && Math.abs(keyframe.percentage - first.percentage) < 0.001
+				? 0
+				: isLast && Math.abs(keyframe.percentage - last.percentage) < 0.001
+					? 100
+					: clampPercentage(
+							((oldPosition + (oldDuration * keyframe.percentage) / 100 -
+								newPosition) /
+								newDuration) *
+								100,
+						),
+	}));
+
+	return mutateAnimationScript({
+		html,
+		animationId,
+		mutate: async (script) => {
+			const { convertToKeyframesFromScript, resizeKeyframedTweenInScript } =
+				await import("@hyperframes/parsers/gsap-writer-acorn");
+			const editableScript =
+				authored == null
+					? convertToKeyframesFromScript(script, animationId)
+					: script;
+			return resizeKeyframedTweenInScript(
+				editableScript,
+				animationId,
+				newPosition,
+				newDuration,
+				pctRemap,
+			);
+		},
+	});
+}
+
+/** Add a statically editable copy of motion discovered only at runtime. */
+export async function addStudioEditableAnimation({
+	html,
+	layer,
+	animation,
+}: {
+	html: string;
+	layer: StudioLayer;
+	animation: StudioRuntimeAnimation;
+}): Promise<string> {
+	const scripts = readInlineScripts(html);
+	const script =
+		scripts.find((candidate) =>
+			candidate.animations.some(
+				(sourceAnimation) =>
+					sourceAnimation.hasUnresolvedSelector &&
+					Math.abs(animationStart(sourceAnimation) - animation.start) < 0.001 &&
+					Math.abs(
+						(sourceAnimation.duration ?? animation.duration) - animation.duration,
+					) < 0.001,
+			),
+		) ?? scripts[0];
+	if (!script || animation.keyframes.length < 2) return html;
+	const { addAnimationWithKeyframesToScript } =
+		await import("@hyperframes/parsers/gsap-writer-acorn");
+	const result = addAnimationWithKeyframesToScript(
+		script.content,
+		layer.selector,
+		animation.start,
+		animation.duration,
+		animation.keyframes,
+	);
+	if (!result.id || result.script === script.content) return html;
+	return `${html.slice(0, script.contentStart)}${result.script}${html.slice(script.contentEnd)}`;
 }
 
 export async function addStudioKeyframe({

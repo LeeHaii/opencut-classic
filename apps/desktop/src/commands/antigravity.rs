@@ -1,6 +1,6 @@
 use hyperframes::agy;
 use serde::{Deserialize, Serialize};
-use std::io::{BufRead, BufReader};
+use std::io::{BufRead, BufReader, Write};
 use std::process::Child;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -106,12 +106,11 @@ pub fn antigravity_run(
         .executable_path
         .map(std::path::PathBuf::from)
         .unwrap_or_default();
-    let args = agy::build_args(
-        &prompt,
-        request.conversation_id.as_deref(),
-        request.model.as_deref(),
-    );
-    let child = util::build_command(&exe, &args, Some(&workspace), false)
+    let args = agy::build_args(request.conversation_id.as_deref(), request.model.as_deref());
+    let stream_input = agy::build_stream_input(&prompt);
+    let mut command = util::build_command(&exe, &args, Some(&workspace), false);
+    command.stdin(std::process::Stdio::piped());
+    let child = command
         .spawn()
         .map_err(|e| format!("failed to start Antigravity CLI: {e}"))?;
 
@@ -124,22 +123,24 @@ pub fn antigravity_run(
     let app_handle = app.clone();
     let request_id = request.request_id.clone();
     std::thread::spawn(move || {
-        supervise_agent(app_handle, request_id, run, child);
+        supervise_agent(app_handle, request_id, run, child, stream_input);
     });
 
     Ok(serde_json::json!({ "accepted": true }))
 }
 
-fn supervise_agent(app: AppHandle, request_id: String, run: Arc<AgentRun>, mut child: Child) {
+fn supervise_agent(
+    app: AppHandle,
+    request_id: String,
+    run: Arc<AgentRun>,
+    mut child: Child,
+    stream_input: String,
+) {
+    let stdin_pipe = child.stdin.take();
     let stdout_pipe: Option<Box<dyn std::io::Read + Send>> =
         child.stdout.take().map(|p| Box::new(p) as _);
     let stderr_pipe: Option<Box<dyn std::io::Read + Send>> =
         child.stderr.take().map(|p| Box::new(p) as _);
-
-    // Store the child so cancellation can kill it.
-    if let Ok(mut slot) = run.child.lock() {
-        *slot = Some(child);
-    }
 
     let app_out = app.clone();
     let id_out = request_id.clone();
@@ -150,6 +151,31 @@ fn supervise_agent(app: AppHandle, request_id: String, run: Arc<AgentRun>, mut c
     let id_err = request_id.clone();
     let err_thread =
         std::thread::spawn(move || collect_stream(stderr_pipe, &app_err, &id_err, "stderr"));
+
+    let input_result = stdin_pipe
+        .ok_or_else(|| "failed to open Antigravity CLI input".to_string())
+        .and_then(|mut stdin| {
+            stdin
+                .write_all(stream_input.as_bytes())
+                .map_err(|e| format!("failed to send prompt to Antigravity CLI: {e}"))
+        });
+    if let Err(message) = input_result {
+        let _ = child.kill();
+        let _ = child.wait();
+        let _ = out_thread.join();
+        let _ = err_thread.join();
+        remove_run_from_state(&app, &request_id);
+        let _ = app.emit(
+            "antigravity-error",
+            serde_json::json!({ "requestId": request_id, "message": message }),
+        );
+        return;
+    }
+
+    // Store the child so cancellation can kill it after stdin is closed.
+    if let Ok(mut slot) = run.child.lock() {
+        *slot = Some(child);
+    }
 
     // Watchdog loop: exit when the process ends, cancellation fires, or time runs out.
     let started = Instant::now();
@@ -269,7 +295,9 @@ fn merge(mut value: serde_json::Value, message: &str) -> serde_json::Value {
 }
 
 const MAX_REFERENCE_IMAGES: usize = 4;
-const MAX_REFERENCE_BYTES: usize = 6 * 1024 * 1024;
+// User attachments are capped lower in the UI, while a validated Wikimedia
+// original may use the desktop image integration's full 12 MB allowance.
+const MAX_REFERENCE_BYTES: usize = 12 * 1024 * 1024;
 
 /// Decodes data-URL images and writes them into `<workspace>/references`,
 /// returning absolute paths the agent can `view_file`. The web layer only

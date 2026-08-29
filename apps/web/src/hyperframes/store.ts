@@ -1,12 +1,17 @@
 "use client";
 
 import { create } from "zustand";
-import type { AgentChatMessage, AntigravityStatus } from "@opencut/hyperframes";
+import type {
+	AgentChatMessage,
+	AntigravityStatus,
+	WebImageAsset,
+} from "@opencut/hyperframes";
 
 export type AgentRunState = {
 	running: boolean;
 	requestId?: string;
 	streamLine?: string;
+	selectedImage?: Pick<WebImageAsset, "placeholder" | "internalUrl">;
 };
 
 interface HyperframesPanelState {

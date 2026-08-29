@@ -15,24 +15,45 @@ export interface CompositionInfo {
  * document containing it.
  */
 export function extractHtml(text: string): string | null {
-	const fenceRe = /```(?:html|HTML)\s*\n([\s\S]*?)\n?```/g;
+	const direct = extractHtmlDocument(text);
+	if (direct) return direct;
+
+	if (text.includes("data-composition-id") && /&lt;/i.test(text)) {
+		return extractHtmlDocument(decodeEscapedMarkup(text));
+	}
+	return null;
+}
+
+function extractHtmlDocument(text: string): string | null {
+	const fenceRe = /```(?:html[ \t]*)?\r?\n([\s\S]*?)\r?\n?```/gi;
 	for (const match of text.matchAll(fenceRe)) {
-		const body = match[1];
-		if (body?.includes("data-composition-id")) {
+		const body = match[1]?.trim();
+		if (body?.includes("data-composition-id") && /<html\b/i.test(body)) {
 			return body;
 		}
 	}
-	const doctypeIndex = text.search(/<!DOCTYPE html|<!doctype html/);
-	if (doctypeIndex >= 0) {
-		const end = text.lastIndexOf("</html>");
-		if (end > doctypeIndex) {
-			const doc = text.slice(doctypeIndex, end + "</html>".length);
+	const doctypeIndex = text.search(/<!doctype\s+html\b/i);
+	const htmlIndex = text.search(/<html\b/i);
+	const start = doctypeIndex >= 0 ? doctypeIndex : htmlIndex;
+	if (start >= 0) {
+		const end = text.toLowerCase().lastIndexOf("</html>");
+		if (end > start) {
+			const doc = text.slice(start, end + "</html>".length);
 			if (doc.includes("data-composition-id")) {
 				return doc;
 			}
 		}
 	}
 	return null;
+}
+
+function decodeEscapedMarkup(text: string): string {
+	return text
+		.replace(/&lt;/gi, "<")
+		.replace(/&gt;/gi, ">")
+		.replace(/&quot;/gi, '"')
+		.replace(/&#(?:39|x27);/gi, "'")
+		.replace(/&amp;/gi, "&");
 }
 
 function readAttribute(tag: string, name: string): string | null {

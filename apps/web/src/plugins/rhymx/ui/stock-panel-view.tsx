@@ -42,6 +42,10 @@ export function StockPanelView() {
 	);
 	const [errorMessage, setErrorMessage] = useState<string | null>(null);
 	const [results, setResults] = useState<StockCandidate[]>([]);
+	const [activeQuery, setActiveQuery] = useState("");
+	const [page, setPage] = useState(1);
+	const [hasMore, setHasMore] = useState(false);
+	const [isLoadingMore, setIsLoadingMore] = useState(false);
 	const [entries, setEntries] = useState<Map<string, StockEntry>>(
 		() => new Map(),
 	);
@@ -119,65 +123,120 @@ export function StockPanelView() {
 		[editor],
 	);
 
+	const searchPage = useCallback(
+		async ({
+			searchQuery,
+			pageNumber,
+			append,
+		}: {
+			searchQuery: string;
+			pageNumber: number;
+			append: boolean;
+		}) => {
+			if (!searchQuery || availableProviders.length === 0) return;
+
+			searchAbortRef.current?.abort();
+			const controller = new AbortController();
+			searchAbortRef.current = controller;
+
+			if (append) {
+				setIsLoadingMore(true);
+			} else {
+				setIsLoadingMore(false);
+				setStatus("searching");
+				setResults([]);
+				setEntries(new Map());
+				setHasMore(false);
+				setPreviewCandidate({ candidate: null });
+			}
+			setErrorMessage(null);
+
+			try {
+				const { candidates } = await searchStockMedia({
+					query: {
+						query: searchQuery,
+						providers: [...availableProviders],
+						kind: "video",
+						page: pageNumber,
+					},
+					context: {
+						pexelsKey: keys.pexels,
+						pixabayKey: keys.pixabay,
+						signal: controller.signal,
+					},
+				});
+				if (controller.signal.aborted) return;
+
+				const priorResults = append ? results : [];
+				const knownIds = new Set(priorResults.map((candidate) => candidate.id));
+				const nextPage = interleaveByProvider(candidates).filter(
+					(candidate) => !knownIds.has(candidate.id),
+				);
+				const merged = [...priorResults, ...nextPage].slice(0, MAX_RESULTS);
+				const nextEntries = append
+					? new Map(entries)
+					: new Map<string, StockEntry>();
+				for (const candidate of nextPage) {
+					if (nextEntries.has(candidate.id)) continue;
+					nextEntries.set(candidate.id, {
+						dragData: {
+							id: "",
+							type: "media",
+							mediaType: "video",
+							name: clipName(candidate),
+							duration: candidate.durationSec,
+							targetElementTypes: [...MASKABLE_ELEMENT_TYPES],
+						},
+						status: "idle",
+					});
+				}
+
+				setResults(merged);
+				setEntries(nextEntries);
+				setActiveQuery(searchQuery);
+				setPage(pageNumber);
+				setHasMore(nextPage.length > 0 && merged.length < MAX_RESULTS);
+				setStatus("done");
+			} catch (error) {
+				if (controller.signal.aborted) return;
+				const message =
+					error instanceof Error ? error.message : "Stock search failed";
+				if (append) {
+					toast.error("Couldn't load more stock videos", {
+						description: message,
+					});
+				} else {
+					setStatus("error");
+					setErrorMessage(message);
+				}
+			} finally {
+				if (!controller.signal.aborted) setIsLoadingMore(false);
+			}
+		},
+		[
+			availableProviders,
+			entries,
+			keys.pexels,
+			keys.pixabay,
+			results,
+			setPreviewCandidate,
+		],
+	);
+
 	const runSearch = useCallback(async () => {
 		const trimmed = query.trim();
-		if (!trimmed || availableProviders.length === 0) return;
+		if (!trimmed) return;
+		await searchPage({ searchQuery: trimmed, pageNumber: 1, append: false });
+	}, [query, searchPage]);
 
-		searchAbortRef.current?.abort();
-		const controller = new AbortController();
-		searchAbortRef.current = controller;
-
-		setStatus("searching");
-		setErrorMessage(null);
-		setResults([]);
-		setPreviewCandidate({ candidate: null });
-		try {
-			const { candidates } = await searchStockMedia({
-				query: {
-					query: trimmed,
-					providers: [...availableProviders],
-					kind: "video",
-				},
-				context: {
-					pexelsKey: keys.pexels,
-					pixabayKey: keys.pixabay,
-					signal: controller.signal,
-				},
-			});
-			if (controller.signal.aborted) return;
-
-			const merged = interleaveByProvider(candidates).slice(0, MAX_RESULTS);
-			const nextEntries = new Map<string, StockEntry>();
-			for (const candidate of merged) {
-				nextEntries.set(candidate.id, {
-					dragData: {
-						id: "",
-						type: "media",
-						mediaType: "video",
-						name: clipName(candidate),
-						duration: candidate.durationSec,
-						targetElementTypes: [...MASKABLE_ELEMENT_TYPES],
-					},
-					status: "idle",
-				});
-			}
-			setResults(merged);
-			setEntries(nextEntries);
-			setStatus("done");
-		} catch (error) {
-			if (controller.signal.aborted) return;
-			setStatus("error");
-			setErrorMessage(
-				error instanceof Error ? error.message : "Stock search failed",
-			);
-		}
-	}, [
-		availableProviders,
-		keys.pexels,
-		keys.pixabay,
-		query,
-		setPreviewCandidate,
-	]);
+	const loadMore = useCallback(async () => {
+		if (!activeQuery || isLoadingMore || !hasMore) return;
+		await searchPage({
+			searchQuery: activeQuery,
+			pageNumber: page + 1,
+			append: true,
+		});
+	}, [activeQuery, hasMore, isLoadingMore, page, searchPage]);
 
 	const addToTimeline = useCallback(
 		({
@@ -221,23 +280,25 @@ export function StockPanelView() {
 	return (
 		<PanelView title="Stock videos" contentClassName="h-full">
 			<div className="flex min-h-full flex-col gap-2 pb-4">
-				<div className="flex items-center gap-1.5">
+				<form
+					className="flex w-full flex-col gap-1.5"
+					onSubmit={(event) => {
+						event.preventDefault();
+						void runSearch();
+					}}
+				>
 					<Input
 						size="xs"
+						className="w-full"
 						value={query}
 						placeholder="Search Pexels + Pixabay…"
 						spellCheck={false}
 						onChange={(event) => setQuery(event.target.value)}
-						onKeyDown={(event) => {
-							if (event.key === "Enter") {
-								event.preventDefault();
-								void runSearch();
-							}
-						}}
 					/>
 					<Button
+						type="submit"
 						size="sm"
-						className="h-8 shrink-0 px-2.5"
+						className="h-8 w-full px-2.5"
 						disabled={
 							status === "searching" ||
 							query.trim().length === 0 ||
@@ -252,7 +313,7 @@ export function StockPanelView() {
 						)}
 						Search
 					</Button>
-				</div>
+				</form>
 
 				<p className="text-muted-foreground px-0.5 text-[10px] leading-relaxed">
 					Click a clip to preview it. The full video downloads only when you add
@@ -354,6 +415,18 @@ export function StockPanelView() {
 						);
 					})}
 				</div>
+
+				{status === "done" && results.length > 0 && hasMore && (
+					<Button
+						variant="outline"
+						className="mt-1 h-8 w-full"
+						disabled={isLoadingMore}
+						onClick={() => void loadMore()}
+					>
+						{isLoadingMore && <Spinner className="size-3.5" />}
+						{isLoadingMore ? "Loading more…" : "Load more"}
+					</Button>
+				)}
 			</div>
 		</PanelView>
 	);

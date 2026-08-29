@@ -15,12 +15,9 @@ import { toast } from "sonner";
 import styles from "./scene-studio-timeline.module.css";
 import {
 	buildStudioTimelineKeyframes,
-	moveStudioKeyframe,
-	removeAllStudioKeyframes,
-	removeStudioKeyframe,
+	retimeStudioKeyframe,
 	scaleStudioLayerAnimations,
 	shiftStudioLayerAnimations,
-	studioTweenPercentageForClipPercentage,
 } from "../studio-animations";
 import {
 	applyStudioLayerPatches,
@@ -351,16 +348,16 @@ export function SceneStudioTimeline() {
 			animationId,
 			fromPercentage,
 			toClipPercentage,
-			remove = false,
 		}: {
 			elementId: string;
 			animationId?: string;
 			fromPercentage: number;
 			toClipPercentage?: number;
-			remove?: boolean;
 		}) => {
 			if (!document || !animationId || animationId.startsWith("runtime:")) {
-				toast.info("Runtime-discovered motion must be edited in Source");
+				toast.info(
+					"Create an editable copy in the Motion inspector before moving this generated keyframe",
+				);
 				return false;
 			}
 			const layer = document.layers.find(
@@ -377,31 +374,14 @@ export function SceneStudioTimeline() {
 					(candidate) => candidate.id === animationId,
 				);
 				if (!animation) return currentHtml;
-				const convertFlat = animation.keyframes == null;
-				const nextHtml = remove
-					? await removeStudioKeyframe({
-							html: currentHtml,
-							animationId,
-							percentage: fromPercentage,
-							convertFlat,
-						})
-					: toClipPercentage == null
-						? currentHtml
-						: await (async () => {
-								const toPercentage = studioTweenPercentageForClipPercentage({
-									animation,
-									layer,
-									clipPercentage: toClipPercentage,
-								});
-								if (toPercentage == null) return currentHtml;
-								return moveStudioKeyframe({
-									html: currentHtml,
-									animationId,
-									fromPercentage,
-									toPercentage,
-									convertFlat,
-								});
-							})();
+				if (toClipPercentage == null) return currentHtml;
+				const nextHtml = await retimeStudioKeyframe({
+					html: currentHtml,
+					layer,
+					animationId,
+					fromPercentage,
+					toClipPercentage,
+				});
 				changed = nextHtml !== currentHtml;
 				return nextHtml;
 			});
@@ -499,14 +479,6 @@ export function SceneStudioTimeline() {
 							toClipPercentage,
 						})
 					}
-					onDeleteKeyframe={(elementId, keyframe) => {
-						void editKeyframe({
-							elementId,
-							animationId: keyframe.animationId,
-							fromPercentage: keyframe.tweenPercentage ?? keyframe.percentage,
-							remove: true,
-						});
-					}}
 					onMoveKeyframeToPlayhead={(element, keyframe) => {
 						const layer = layerForElement({ layers: document.layers, element });
 						if (!layer) return;
@@ -518,33 +490,6 @@ export function SceneStudioTimeline() {
 							fromPercentage: keyframe.tweenPercentage ?? keyframe.percentage,
 							toClipPercentage:
 								((localTime - layer.start) / layer.duration) * 100,
-						});
-					}}
-					onDeleteAllKeyframes={(element, animationId) => {
-						const layer = layerForElement({ layers: document.layers, element });
-						if (!layer) return;
-						void commitMutation(async (currentHtml) => {
-							const data = buildStudioTimelineKeyframes({
-								html: currentHtml,
-								layer,
-							});
-							const ids = animationId
-								? [animationId]
-								: (data?.animations.map((animation) => animation.id) ?? []);
-							const flatIds = new Set(
-								(data?.animations ?? [])
-									.filter((animation) => animation.keyframes == null)
-									.map((animation) => animation.id),
-							);
-							let nextHtml = currentHtml;
-							for (const id of ids) {
-								nextHtml = await removeAllStudioKeyframes({
-									html: nextHtml,
-									animationId: id,
-									convertFlat: flatIds.has(id),
-								});
-							}
-							return nextHtml;
 						});
 					}}
 					onDeleteElement={(element) => {

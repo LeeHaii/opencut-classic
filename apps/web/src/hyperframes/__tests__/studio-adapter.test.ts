@@ -1,14 +1,17 @@
 import { describe, expect, test } from "bun:test";
 import {
+	addStudioEditableAnimation,
 	addStudioKeyframe,
 	buildStudioTimelineKeyframes,
 	getStudioLayerAnimations,
 	interpolateStudioKeyframeProperties,
 	moveStudioKeyframe,
 	parseStudioRuntimeMotionSnapshot,
+	retimeStudioKeyframe,
 	removeAllStudioKeyframes,
 	scaleStudioLayerAnimations,
 	shiftStudioLayerAnimations,
+	updateStudioKeyframe,
 } from "../studio-animations";
 import {
 	applyStudioLayerPatches,
@@ -205,6 +208,70 @@ tl.to("#title", {
 		]);
 	});
 
+	test("resizes the tween when its first or last key is dragged", async () => {
+		const extended = await retimeStudioKeyframe({
+			html,
+			layer: titleLayer,
+			animationId: getStudioLayerAnimations({ html, layer: titleLayer })
+				.animations[0]!.id,
+			fromPercentage: 100,
+			toClipPercentage: 100,
+		});
+		const extendedAnimation = getStudioLayerAnimations({
+			html: extended,
+			layer: titleLayer,
+		}).animations[0];
+		expect(extendedAnimation?.resolvedStart).toBe(0);
+		expect(extendedAnimation?.duration).toBe(3);
+
+		const shortened = await retimeStudioKeyframe({
+			html: extended,
+			layer: titleLayer,
+			animationId: extendedAnimation!.id,
+			fromPercentage: 0,
+			toClipPercentage: 100 / 3,
+		});
+		const shortenedResult = getStudioLayerAnimations({
+			html: shortened,
+			layer: titleLayer,
+		});
+		expect(shortenedResult.animations[0]?.resolvedStart).toBeCloseTo(1, 5);
+		expect(shortenedResult.animations[0]?.duration).toBe(2);
+		expect(
+			shortenedResult.keyframes.map((keyframe) => keyframe.percentage),
+		).toEqual([0, 100]);
+	});
+
+	test("converts a flat tween before resizing its boundary", async () => {
+		const flatHtml = html.replace(
+			`keyframes: {
+    "0%": { x: 0, opacity: 0 },
+    "100%": { x: 100, opacity: 1 }
+  }`,
+			"x: 100, opacity: 1",
+		);
+		const animation = getStudioLayerAnimations({
+			html: flatHtml,
+			layer: titleLayer,
+		}).animations[0]!;
+		const patched = await retimeStudioKeyframe({
+			html: flatHtml,
+			layer: titleLayer,
+			animationId: animation.id,
+			fromPercentage: 100,
+			toClipPercentage: 100,
+		});
+		const result = getStudioLayerAnimations({
+			html: patched,
+			layer: titleLayer,
+		});
+		expect(result.animations[0]?.duration).toBe(3);
+		expect(result.animations[0]?.keyframes).toBeTruthy();
+		expect(result.keyframes.map((keyframe) => keyframe.percentage)).toEqual([
+			0, 100,
+		]);
+	});
+
 	test("adds an interpolated key at the playhead", async () => {
 		const result = getStudioLayerAnimations({ html, layer: titleLayer });
 		const animationId = result.animations[0]!.id;
@@ -281,6 +348,60 @@ tl.to("#title", {
 		expect(result.keyframes).toHaveLength(2);
 		expect(result.keyframes[0]?.editability).toBe("source");
 		expect(result.diagnostics[0]?.kind).toBe("runtime-only");
+	});
+
+	test("creates an editable static copy of runtime-discovered motion", async () => {
+		const dynamicHtml = html.replace(
+			'tl.to("#title", {',
+			"const target = '#title';\ntl.to(target, {",
+		);
+		const runtimeAnimation = {
+			id: "runtime:0:title",
+			targetKeys: ["title"],
+			targetSelector: "title",
+			start: 0,
+			duration: 2,
+			propertyGroup: "position",
+			properties: { x: 100 },
+			keyframes: [
+				{ percentage: 0, properties: { x: 0 } },
+				{ percentage: 100, properties: { x: 100 }, ease: "power2.out" },
+			],
+		};
+		const patched = await addStudioEditableAnimation({
+			html: dynamicHtml,
+			layer: titleLayer,
+			animation: runtimeAnimation,
+		});
+		const result = getStudioLayerAnimations({
+			html: patched,
+			layer: titleLayer,
+			runtimeSnapshot: {
+				compositionId: "scene",
+				animations: [runtimeAnimation],
+			},
+		});
+		expect(result.animations).toHaveLength(1);
+		expect(result.runtimeAnimations).toHaveLength(0);
+		expect(result.keyframes.every((keyframe) => keyframe.editability === "direct"))
+			.toBe(true);
+	});
+
+	test("updates the easing curve for one keyframe segment", async () => {
+		const animation = getStudioLayerAnimations({ html, layer: titleLayer })
+			.animations[0]!;
+		const patched = await updateStudioKeyframe({
+			html,
+			animationId: animation.id,
+			percentage: 100,
+			properties: { x: 100, opacity: 1 },
+			ease: "power2.inOut",
+		});
+		const destination = getStudioLayerAnimations({
+			html: patched,
+			layer: titleLayer,
+		}).keyframes.find((keyframe) => keyframe.percentage === 100);
+		expect(destination?.ease).toBe("power2.inOut");
 	});
 
 	test("rejects unbounded or executable runtime motion payloads", () => {
