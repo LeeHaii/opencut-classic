@@ -90,6 +90,12 @@ export interface WebImageSearchResult {
 	candidates: WebImageCandidate[];
 }
 
+export type WebImageSearchOutcome =
+	| { kind: "results"; result: WebImageSearchResult }
+	| { kind: "notRequested" }
+	| { kind: "denied" }
+	| { kind: "noResults"; query: string };
+
 export interface WebImageAsset {
 	id: string;
 	name: string;

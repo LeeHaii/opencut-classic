@@ -92,6 +92,39 @@ export const previewBridgeSource = String.raw`
     } catch (e) { /* parent unreachable */ }
   }
 
+  function monitorSelectedImages() {
+    var images = document.querySelectorAll("img[data-opencut-selected-image]");
+    for (var i = 0; i < images.length; i++) {
+      (function (image) {
+        var reported = false;
+        var imageId = image.getAttribute("data-opencut-selected-image") || "selected image";
+        function reportLoaded() {
+          if (reported) return;
+          reported = true;
+          post("selected-image-loaded", {
+            imageId: imageId,
+            width: image.naturalWidth,
+            height: image.naturalHeight
+          });
+        }
+        function reportError() {
+          if (reported) return;
+          reported = true;
+          post("selected-image-error", {
+            imageId: imageId,
+            message: "The selected image could not be loaded in the AI Motion preview."
+          });
+        }
+        image.addEventListener("load", reportLoaded, { once: true });
+        image.addEventListener("error", reportError, { once: true });
+        if (image.complete) {
+          if (image.naturalWidth > 0) reportLoaded();
+          else reportError();
+        }
+      })(images[i]);
+    }
+  }
+
   function escapeSelectorValue(value) {
     if (window.CSS && typeof window.CSS.escape === "function") {
       return window.CSS.escape(value);
@@ -526,6 +559,7 @@ export const previewBridgeSource = String.raw`
       updateTimedElements();
       ensureSelectionOverlay();
       post("ready", { duration: duration, currentTime: 0, compositionId: compositionId });
+      monitorSelectedImages();
 	  scanRuntimeMotion();
       requestAnimationFrame(tick);
     } else if (tries >= MAX_TRIES) {

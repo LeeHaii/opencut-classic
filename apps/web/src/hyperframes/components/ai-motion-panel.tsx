@@ -36,6 +36,7 @@ import {
 	buildSeedComposition,
 	extractHtml,
 	quickValidate,
+	validateSelectedImageUsage,
 	isNative,
 	nativeInvoke,
 	onAntigravityChunk,
@@ -48,6 +49,7 @@ import {
 	type AntigravityStatus,
 	type WebImageAsset,
 	type WebImageSearchResult,
+	type WebImageSearchOutcome,
 } from "@opencut/hyperframes";
 import { buildHyperframesElement } from "@/timeline/element-utils";
 import {
@@ -215,13 +217,15 @@ export function AiMotionPanelView() {
 		request,
 		images = [],
 		webImage,
+		targetElementId = resolvedActiveElementId,
 	}: {
 		request: string;
 		images?: string[];
 		webImage?: WebImageAsset;
+		targetElementId?: string | null;
 	}) => {
-		const entry = resolvedActiveElementId
-			? findEntry({ editor, elementId: resolvedActiveElementId })
+		const entry = targetElementId
+			? findEntry({ editor, elementId: targetElementId })
 			: null;
 		if (!entry || !project) return;
 		const element = entry.element;
@@ -265,6 +269,7 @@ export function AiMotionPanelView() {
 			...(webImage
 				? {
 						selectedImage: {
+							id: webImage.id,
 							name: webImage.name,
 							placeholder: webImage.placeholder,
 							sourcePageUrl: webImage.sourcePageUrl,
@@ -286,6 +291,7 @@ export function AiMotionPanelView() {
 				...(webImage
 					? {
 							selectedImage: {
+								id: webImage.id,
 								placeholder: webImage.placeholder,
 								internalUrl: webImage.internalUrl,
 							},
@@ -321,20 +327,22 @@ export function AiMotionPanelView() {
 				? materializeSelectedImage({ html: extracted, webImage })
 				: null;
 			const info = html ? quickValidate(html) : null;
-			store.appendChat({
-				elementId: element.id,
-				message: {
-					id: newId(),
-					role: "assistant",
-					text: summaryFromReply(text),
-					createdAt: new Date().toISOString(),
-				},
-			});
 			if (!html || !info) {
 				throw new Error(
 					"The browser agent did not return a valid HyperFrames composition. Try rephrasing.",
 				);
 			}
+			store.appendChat({
+				elementId: element.id,
+				message: {
+					id: newId(),
+					role: "assistant",
+					text: webImage
+						? "Image applied to the selected scene."
+						: summaryFromReply(text),
+					createdAt: new Date().toISOString(),
+				},
+			});
 			const currentEntry = findEntry({ editor, elementId: element.id });
 			if (!currentEntry) return;
 			editor.timeline.updateElements({
@@ -388,13 +396,18 @@ export function AiMotionPanelView() {
 		images,
 	}: {
 		value: string;
-		images: string[];
+		images: AttachmentImage[];
 	}) => {
 		const entry = activeEntry;
 		if (!entry || !project) return;
 		const elementId = entry.element.id;
+		const imageDataUrls = images.map((image) => image.dataUrl);
 		if (!native) {
-			await handleSend({ request: value, images });
+			await handleSend({
+				request: value,
+				images: imageDataUrls,
+				targetElementId: elementId,
+			});
 			return;
 		}
 		if (images.length > 0) {
@@ -403,22 +416,22 @@ export function AiMotionPanelView() {
 				message: "Preparing attached image for the composition…",
 			});
 			try {
-				const selectedImage = await nativeInvoke<WebImageAsset | null>(
+				const selectedImage = await nativeInvoke<WebImageAsset>(
 					"hf_image_ingest_attachment",
 					{
 						request: {
 							projectId: project.metadata.id,
 							elementId: entry.element.id,
-							userPrompt: value,
-							dataUrl: images[0],
-							name: "Attached image",
+							dataUrl: images[0].dataUrl,
+							name: images[0].name,
 						},
 					},
 				);
 				await handleSend({
 					request: value,
-					images,
-					...(selectedImage ? { webImage: selectedImage } : {}),
+					images: imageDataUrls,
+					webImage: selectedImage,
+					targetElementId: elementId,
 				});
 			} catch (error) {
 				toast.error("Could not prepare the attached image", {
@@ -436,7 +449,7 @@ export function AiMotionPanelView() {
 			message: "Searching Wikimedia Commons for image candidates…",
 		});
 		try {
-			const result = await nativeInvoke<WebImageSearchResult | null>(
+			const outcome = await nativeInvoke<WebImageSearchOutcome>(
 				"hf_image_search",
 				{
 					request: {
@@ -447,11 +460,28 @@ export function AiMotionPanelView() {
 					},
 				},
 			);
-			if (result) {
-				setPendingWebImageSearch({ elementId, request: value, result });
-				return;
+			switch (outcome.kind) {
+				case "results":
+					setPendingWebImageSearch({
+						elementId,
+						request: value,
+						result: outcome.result,
+					});
+					return;
+				case "noResults":
+					toast.error("No suitable web images found", {
+						description: `Wikimedia Commons had no supported results for “${outcome.query}”.`,
+					});
+					return;
+				case "notRequested":
+				case "denied":
+					await handleSend({
+						request: value,
+						images: imageDataUrls,
+						targetElementId: elementId,
+					});
+					return;
 			}
-			await handleSend({ request: value, images });
 		} catch (error) {
 			toast.error("Image search failed", { description: errorMessage(error) });
 		} finally {
@@ -472,7 +502,6 @@ export function AiMotionPanelView() {
 				request: {
 					projectId: project.metadata.id,
 					elementId: entry.element.id,
-					userPrompt: pending.request,
 					searchId: pending.result.searchId,
 					candidateId,
 				},
@@ -484,6 +513,7 @@ export function AiMotionPanelView() {
 				request: pending.request,
 				images: [webImage.dataUrl],
 				webImage,
+				targetElementId: elementId,
 			});
 		} catch (error) {
 			toast.error("Could not use this image", {
@@ -532,6 +562,7 @@ export function AiMotionPanelView() {
 		if (hasHtml && !isRunning) {
 			void handleSend({
 				request: `Change the total composition duration to exactly ${formatLengthLabel(nextSecs)} seconds. Keep the existing visual style and content, and retime or extend every clip so the animation fills the full duration.`,
+				targetElementId: entry.element.id,
 			});
 		}
 	};
@@ -590,17 +621,14 @@ export function AiMotionPanelView() {
 
 			const extracted = extractHtml(payload.text);
 			let html = extracted;
+			let imageValidationError: string | null = null;
 			if (html && runState.selectedImage) {
-				if (!html.includes(runState.selectedImage.placeholder)) {
-					state.appendChat({
-						elementId,
-						message: {
-							id: newId(),
-							role: "system",
-							text: "The generated scene did not use the selected image. Try again and ask the agent to use the provided image as composition media.",
-							createdAt: new Date().toISOString(),
-						},
-					});
+				const validation = validateSelectedImageUsage(html, {
+					id: runState.selectedImage.id,
+					placeholder: runState.selectedImage.placeholder,
+				});
+				if (!validation.valid) {
+					imageValidationError = validation.error;
 					html = null;
 				} else {
 					html = html.replaceAll(
@@ -611,30 +639,35 @@ export function AiMotionPanelView() {
 			}
 			const info = html ? quickValidate(html) : null;
 
-			state.appendChat({
-				elementId,
-				message: {
-					id: newId(),
-					role: "assistant",
-					text: summaryFromReply(payload.text),
-					createdAt: new Date().toISOString(),
-				},
-			});
-
 			if (!html || !info) {
 				state.appendChat({
 					elementId,
 					message: {
 						id: newId(),
 						role: "system",
-						text: html
-							? "The AI returned incomplete composition HTML, so the existing scene was left unchanged. Try the update again."
-							: "The AI returned an explanation instead of the complete updated composition, so the existing scene was left unchanged. Try the update again.",
+						text:
+							imageValidationError != null
+								? `${imageValidationError} The existing scene was left unchanged. Try again and ask the agent to use the provided image as composition media.`
+								: html
+									? "The AI returned incomplete composition HTML, so the existing scene was left unchanged. Try the update again."
+									: "The AI returned an explanation instead of the complete updated composition, so the existing scene was left unchanged. Try the update again.",
 						createdAt: new Date().toISOString(),
 					},
 				});
 				return;
 			}
+
+			state.appendChat({
+				elementId,
+				message: {
+					id: newId(),
+					role: "assistant",
+					text: runState.selectedImage
+						? "Image applied to the selected scene."
+						: summaryFromReply(payload.text),
+					createdAt: new Date().toISOString(),
+				},
+			});
 
 			applyGeneratedHtml({
 				elementId,
@@ -1253,6 +1286,7 @@ function ChatHistory({ messages }: { messages: AgentChatMessage[] }) {
 
 interface AttachmentImage {
 	id: string;
+	name: string;
 	dataUrl: string;
 }
 
@@ -1261,7 +1295,7 @@ function PromptInput({
 	onSubmit,
 }: {
 	disabled: boolean;
-	onSubmit: (args: { value: string; images: string[] }) => void;
+	onSubmit: (args: { value: string; images: AttachmentImage[] }) => void;
 }) {
 	const [value, setValue] = useState("");
 	const [images, setImages] = useState<AttachmentImage[]>([]);
@@ -1281,6 +1315,7 @@ function PromptInput({
 			try {
 				accepted.push({
 					id: newId(),
+					name: file.name,
 					dataUrl: await readFileAsDataUrl(file),
 				});
 			} catch {
@@ -1303,7 +1338,7 @@ function PromptInput({
 		if (!trimmed && images.length === 0) return;
 		onSubmit({
 			value: trimmed || defaultRequestForImages(images.length),
-			images: images.map((image) => image.dataUrl),
+			images,
 		});
 		setValue("");
 		setImages([]);
@@ -1560,9 +1595,13 @@ function materializeSelectedImage({
 	webImage?: WebImageAsset;
 }): string {
 	if (!webImage) return html;
-	if (!html.includes(webImage.placeholder)) {
+	const validation = validateSelectedImageUsage(html, {
+		id: webImage.id,
+		placeholder: webImage.placeholder,
+	});
+	if (!validation.valid) {
 		throw new Error(
-			"The generated scene did not use the selected image. Try again and explicitly ask the agent to use the provided image as composition media.",
+			`${validation.error} The existing scene was left unchanged.`,
 		);
 	}
 	return html.replaceAll(webImage.placeholder, webImage.internalUrl);

@@ -11,7 +11,7 @@ export type AgentRunState = {
 	running: boolean;
 	requestId?: string;
 	streamLine?: string;
-	selectedImage?: Pick<WebImageAsset, "placeholder" | "internalUrl">;
+	selectedImage?: Pick<WebImageAsset, "id" | "placeholder" | "internalUrl">;
 };
 
 interface HyperframesPanelState {

@@ -271,6 +271,13 @@ function HyperframesPreview({
 						});
 					}
 				}
+			} else if (event.data.type === "selected-image-loaded") {
+				setError(null);
+			} else if (event.data.type === "selected-image-error") {
+				setError(
+					event.data.message ??
+						"The selected image could not be loaded in the AI Motion preview.",
+				);
 			} else if (event.data.type === "error") {
 				setError(
 					event.data.message ?? "HyperFrames preview failed to initialize.",

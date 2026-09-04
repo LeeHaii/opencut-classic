@@ -1,5 +1,8 @@
 use base64::Engine as _;
-use hyperframes::{composition_dirs_in, media_refs};
+use hyperframes::{
+    WebImageIntent, classify_web_image_intent, composition_dirs_in, derive_web_image_query,
+    media_refs,
+};
 use reqwest::blocking::{Client, Response};
 use reqwest::redirect::Policy;
 use serde::{Deserialize, Serialize};
@@ -65,7 +68,6 @@ pub struct WebImageSearchResult {
 pub struct ImageIngestRequest {
     pub project_id: String,
     pub element_id: String,
-    pub user_prompt: String,
     pub search_id: String,
     pub candidate_id: String,
 }
@@ -75,7 +77,6 @@ pub struct ImageIngestRequest {
 pub struct AttachmentImageIngestRequest {
     pub project_id: String,
     pub element_id: String,
-    pub user_prompt: String,
     pub data_url: String,
     #[serde(default)]
     pub name: Option<String>,
@@ -99,6 +100,15 @@ pub struct WebImageAsset {
     sha256: String,
 }
 
+#[derive(Debug, Serialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum WebImageSearchOutcome {
+    Results { result: WebImageSearchResult },
+    NotRequested,
+    Denied,
+    NoResults { query: String },
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ResolveMediaRequest {
@@ -114,211 +124,6 @@ fn validate_ids(project_id: &str, element_id: &str) -> Result<(), String> {
         }
     }
     Ok(())
-}
-
-fn normalized_prompt(value: &str) -> String {
-    value.split_whitespace().collect::<Vec<_>>().join(" ")
-}
-
-fn explicitly_denies_search(prompt: &str) -> bool {
-    let lower = prompt.to_ascii_lowercase();
-    [
-        "do not search",
-        "don't search",
-        "dont search",
-        "never search",
-        "no web image",
-        "no online image",
-        "without web image",
-        "without online image",
-    ]
-    .iter()
-    .any(|needle| lower.contains(needle))
-}
-
-fn explicitly_allows_search(prompt: &str) -> bool {
-    if explicitly_denies_search(prompt) {
-        return false;
-    }
-    let lower = normalized_prompt(prompt).to_ascii_lowercase();
-    let image_word = ["image", "images", "photo", "photos", "picture", "pictures"]
-        .iter()
-        .any(|word| lower.contains(word));
-    let search_word = ["search", "find", "look up", "source", "download"]
-        .iter()
-        .any(|word| lower.contains(word));
-    let web_word = ["web", "online", "internet"]
-        .iter()
-        .any(|word| lower.contains(word));
-    let use_from_web = web_word
-        && ["use", "include", "add", "replace", "put", "place", "insert"]
-            .iter()
-            .any(|word| lower.contains(word));
-    let real_image = [
-        "real image",
-        "real images",
-        "actual image",
-        "actual images",
-        "real photo",
-        "real photos",
-    ]
-    .iter()
-    .any(|phrase| lower.contains(phrase));
-    image_word
-        && (search_word
-            || real_image
-            || use_from_web
-            || lower.contains("search images")
-            || lower.contains("find photos"))
-}
-
-fn explicitly_uses_attachment(prompt: &str) -> bool {
-    let lower = normalized_prompt(prompt).to_ascii_lowercase();
-    if [
-        "do not use the image",
-        "don't use the image",
-        "dont use the image",
-        "do not use the attachment",
-        "don't use the attachment",
-        "do not use attached",
-        "don't use attached",
-        "dont use attached",
-        "do not use the attached",
-        "don't use the attached",
-        "dont use the attached",
-        "style reference",
-        "visual reference",
-        "as inspiration",
-    ]
-    .iter()
-    .any(|phrase| lower.contains(phrase))
-    {
-        return false;
-    }
-    let action = [
-        "use", "include", "add", "replace", "put", "place", "insert", "set", "show",
-    ]
-    .iter()
-    .any(|word| {
-        lower.split_whitespace().any(|token| {
-            token.trim_matches(|character: char| !character.is_ascii_alphabetic()) == *word
-        })
-    });
-    let media = [
-        "image",
-        "images",
-        "photo",
-        "photos",
-        "picture",
-        "pictures",
-        "portrait",
-        "attachment",
-        "attached",
-        "this image",
-        "this photo",
-        "this picture",
-    ]
-    .iter()
-    .any(|word| lower.contains(word));
-    action && media
-}
-
-fn derive_query(prompt: &str) -> String {
-    let mut value = normalized_prompt(prompt);
-    let lower = value.to_ascii_lowercase();
-    for marker in [
-        "video about ",
-        "animation about ",
-        "scene about ",
-        "story about ",
-    ] {
-        if let Some(index) = lower.find(marker) {
-            value = value[index + marker.len()..].to_string();
-            if let Some(end) = value.to_ascii_lowercase().find(" and ") {
-                value.truncate(end);
-            }
-            break;
-        }
-    }
-    let lower = value.to_ascii_lowercase();
-    for marker in [
-        "images of ",
-        "image of ",
-        "photos of ",
-        "photo of ",
-        "pictures of ",
-        "picture of ",
-    ] {
-        if let Some(index) = lower.find(marker) {
-            value = value[index + marker.len()..].to_string();
-            break;
-        }
-    }
-    for ending in [
-        " from the web",
-        " from web",
-        " online",
-        " on the internet",
-        " from the internet",
-    ] {
-        if let Some(index) = value.to_ascii_lowercase().find(ending) {
-            value.truncate(index);
-        }
-    }
-    let cleaned = value
-        .trim_matches(|character: char| character.is_whitespace() || ".,;:!?-".contains(character))
-        .trim();
-    let generic_words = [
-        "search",
-        "find",
-        "look",
-        "up",
-        "source",
-        "use",
-        "include",
-        "add",
-        "download",
-        "web",
-        "online",
-        "internet",
-        "real",
-        "actual",
-        "suitable",
-        "image",
-        "images",
-        "photo",
-        "photos",
-        "picture",
-        "pictures",
-        "from",
-        "on",
-        "for",
-        "where",
-        "when",
-        "useful",
-        "the",
-        "this",
-        "an",
-        "a",
-        "video",
-        "animation",
-        "scene",
-    ];
-    let concise = cleaned
-        .split_whitespace()
-        .filter(|word| {
-            let normalized = word
-                .trim_matches(|character: char| ".,;:!?-".contains(character))
-                .to_ascii_lowercase();
-            !generic_words.contains(&normalized.as_str())
-        })
-        .collect::<Vec<_>>()
-        .join(" ");
-    if concise.is_empty() {
-        "editorial photography".to_string()
-    } else {
-        concise.chars().take(160).collect()
-    }
 }
 
 fn text_metadata(value: Option<&serde_json::Value>, fallback: &str) -> String {
@@ -382,12 +187,14 @@ fn search_dir(root: &Path, id: &str) -> Result<PathBuf, String> {
 fn search_images_inner(
     app: AppHandle,
     request: ImageSearchRequest,
-) -> Result<Option<WebImageSearchResult>, String> {
+) -> Result<WebImageSearchOutcome, String> {
     validate_ids(&request.project_id, &request.element_id)?;
-    if !explicitly_allows_search(&request.user_prompt) {
-        return Ok(None);
+    match classify_web_image_intent(&request.user_prompt) {
+        WebImageIntent::Denied => return Ok(WebImageSearchOutcome::Denied),
+        WebImageIntent::NotRequested => return Ok(WebImageSearchOutcome::NotRequested),
+        WebImageIntent::Requested => {}
     }
-    let query = derive_query(&request.user_prompt);
+    let query = derive_web_image_query(&request.user_prompt);
     let limit = request.limit.unwrap_or(8).clamp(4, MAX_SEARCH_RESULTS);
     let mut api_url =
         reqwest::Url::parse(COMMONS_API).map_err(|_| "Wikimedia API URL is invalid".to_string())?;
@@ -504,9 +311,7 @@ fn search_images_inner(
     });
     candidates.truncate(limit);
     if candidates.is_empty() {
-        return Err(format!(
-            "No suitable Wikimedia Commons images were found for “{query}”."
-        ));
+        return Ok(WebImageSearchOutcome::NoResults { query });
     }
     let id = search_id(&query);
     let root = composition_root(&app, &request.project_id, &request.element_id)?;
@@ -523,18 +328,20 @@ fn search_images_inner(
         serde_json::to_vec_pretty(&stored).map_err(|error| error.to_string())?,
     )
     .map_err(|error| format!("could not save image candidates: {error}"))?;
-    Ok(Some(WebImageSearchResult {
-        search_id: id,
-        query,
-        candidates,
-    }))
+    Ok(WebImageSearchOutcome::Results {
+        result: WebImageSearchResult {
+            search_id: id,
+            query,
+            candidates,
+        },
+    })
 }
 
 #[tauri::command]
 pub async fn hf_image_search(
     app: AppHandle,
     request: ImageSearchRequest,
-) -> Result<Option<WebImageSearchResult>, String> {
+) -> Result<WebImageSearchOutcome, String> {
     tauri::async_runtime::spawn_blocking(move || search_images_inner(app, request))
         .await
         .map_err(|error| format!("image search task failed: {error}"))?
@@ -738,9 +545,6 @@ fn ingest_image_inner(
     request: ImageIngestRequest,
 ) -> Result<WebImageAsset, String> {
     validate_ids(&request.project_id, &request.element_id)?;
-    if !explicitly_allows_search(&request.user_prompt) {
-        return Err("web image search was not explicitly authorized in this request".to_string());
-    }
     let root = composition_root(&app, &request.project_id, &request.element_id)?;
     let stored_path = search_dir(&root, &request.search_id)?.join("candidates.json");
     let stored: StoredSearch = serde_json::from_slice(
@@ -795,11 +599,8 @@ pub async fn hf_image_ingest(
 fn ingest_attachment_inner(
     app: AppHandle,
     request: AttachmentImageIngestRequest,
-) -> Result<Option<WebImageAsset>, String> {
+) -> Result<WebImageAsset, String> {
     validate_ids(&request.project_id, &request.element_id)?;
-    if !explicitly_uses_attachment(&request.user_prompt) {
-        return Ok(None);
-    }
     let bytes = decode_image_data_url(&request.data_url)?;
     let root = composition_root(&app, &request.project_id, &request.element_id)?;
     freeze_image(
@@ -819,14 +620,13 @@ fn ingest_attachment_inner(
             query: None,
         },
     )
-    .map(Some)
 }
 
 #[tauri::command]
 pub async fn hf_image_ingest_attachment(
     app: AppHandle,
     request: AttachmentImageIngestRequest,
-) -> Result<Option<WebImageAsset>, String> {
+) -> Result<WebImageAsset, String> {
     tauri::async_runtime::spawn_blocking(move || ingest_attachment_inner(app, request))
         .await
         .map_err(|error| format!("attachment ingest task failed: {error}"))?
@@ -918,65 +718,22 @@ mod tests {
     use super::*;
 
     #[test]
-    fn image_search_requires_explicit_permission() {
-        for prompt in [
-            "Search the web for images of Mount Fuji",
-            "Search online for images of Tokyo",
-            "Use a real photo of Tokyo",
-            "Find real photos of SpaceX launches",
-            "Search for suitable photos where useful",
-            "elon musk image from the web to replace the middle image",
-        ] {
-            assert!(explicitly_allows_search(prompt), "{prompt}");
-        }
-        for prompt in [
-            "Make a cinematic Tokyo animation",
-            "Use cinematic photography style",
-            "Show a real person in a cinematic location",
-            "Use photos but do not search the web",
-        ] {
-            assert!(!explicitly_allows_search(prompt), "{prompt}");
-        }
-    }
-
-    #[test]
-    fn derives_a_bounded_subject_query() {
+    fn serializes_explicit_search_outcomes_for_the_web_shell() {
         assert_eq!(
-            derive_query("Search the web for images of Mount Fuji."),
-            "Mount Fuji"
-        );
-        assert_eq!(derive_query("Use a real photo of Tokyo online."), "Tokyo");
-        assert_eq!(
-            derive_query("Make a video about Mount Everest and use real photos from the web."),
-            "Mount Everest"
+            serde_json::to_value(WebImageSearchOutcome::NotRequested).unwrap(),
+            serde_json::json!({ "kind": "notRequested" })
         );
         assert_eq!(
-            derive_query("Search for suitable photos where useful."),
-            "editorial photography"
+            serde_json::to_value(WebImageSearchOutcome::Denied).unwrap(),
+            serde_json::json!({ "kind": "denied" })
         );
         assert_eq!(
-            derive_query("elon musk image from the web to replace the middle image"),
-            "elon musk"
+            serde_json::to_value(WebImageSearchOutcome::NoResults {
+                query: "Grace Hopper".to_string(),
+            })
+            .unwrap(),
+            serde_json::json!({ "kind": "noResults", "query": "Grace Hopper" })
         );
-    }
-
-    #[test]
-    fn attachment_use_requires_explicit_media_intent() {
-        for prompt in [
-            "replace image in the center with this elon image",
-            "Use the attached photo as the background",
-            "put this portrait in the circle",
-        ] {
-            assert!(explicitly_uses_attachment(prompt), "{prompt}");
-        }
-        for prompt in [
-            "make it feel cinematic",
-            "use this image as a style reference",
-            "use the attached picture as inspiration",
-            "do not use the attached image",
-        ] {
-            assert!(!explicitly_uses_attachment(prompt), "{prompt}");
-        }
     }
 
     #[test]

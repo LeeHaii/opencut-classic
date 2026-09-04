@@ -15,6 +15,11 @@ export {
 } from "./design-skills";
 export { extractHtml, quickValidate, auditCompositionAnimation } from "./extract";
 export type { CompositionInfo } from "./extract";
+export { validateSelectedImageUsage } from "./selected-image";
+export type {
+	SelectedImageRequirement,
+	SelectedImageValidation,
+} from "./selected-image";
 export {
 	isNative,
 	nativeInvoke,
@@ -33,6 +38,7 @@ export type {
 	AgentChunkPayload,
 	WebImageCandidate,
 	WebImageSearchResult,
+	WebImageSearchOutcome,
 	WebImageAsset,
 	HfRenderRequest,
 	StudioOpenRequest,
