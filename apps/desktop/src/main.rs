@@ -46,6 +46,7 @@ fn main() {
             commands::web_images::hf_image_ingest,
             commands::web_images::hf_image_ingest_attachment,
             commands::web_images::hf_media_resolve,
+            commands::web_images::hf_studio_replace_image,
             commands::doctor::hf_doctor,
             commands::render::hf_render,
             commands::render::hf_render_cancel,

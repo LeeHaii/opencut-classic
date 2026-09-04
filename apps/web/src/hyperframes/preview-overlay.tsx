@@ -1,12 +1,21 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+	useCallback,
+	useEffect,
+	useMemo,
+	useRef,
+	useState,
+	useSyncExternalStore,
+} from "react";
 import {
 	PARENT_MESSAGE_SOURCE,
 	PREVIEW_MESSAGE_SOURCE,
 	isNative,
 	nativeInvoke,
 	preparePreviewHtml,
+	quickValidate,
+	type StudioImageReplaceResult,
 } from "@opencut/hyperframes";
 import { getElementLocalTime } from "@/animation";
 import { useEditor } from "@/editor/use-editor";
@@ -24,13 +33,17 @@ import type {
 } from "@/timeline";
 import { TICKS_PER_SECOND } from "@/wasm";
 import { Hand, MousePointer2 } from "lucide-react";
+import { toast } from "sonner";
 import { getHyperframesPreviewLayout } from "./preview-layout";
 import {
+	applyStudioLayerPatches,
 	postStudioPreviewAction,
+	studioLayerFromPreviewSelection,
 	type StudioPreviewSelection,
 } from "./studio-document";
 import { parseStudioRuntimeMotionSnapshot } from "./studio-animations";
 import { useHyperframesStudioStore } from "./studio-store";
+import { findStudioElement } from "./use-studio-element";
 
 interface PreviewMessage {
 	source?: string;
@@ -38,6 +51,22 @@ interface PreviewMessage {
 	message?: string;
 	element?: StudioPreviewSelection;
 	motion?: unknown;
+	requestId?: string;
+}
+
+const noActiveDrag = () => null;
+
+function fileAsDataUrl(file: File): Promise<string> {
+	return new Promise((resolve, reject) => {
+		const reader = new FileReader();
+		reader.onload = () =>
+			typeof reader.result === "string"
+				? resolve(reader.result)
+				: reject(new Error("Could not read the dropped image"));
+		reader.onerror = () =>
+			reject(reader.error ?? new Error("Could not read image"));
+		reader.readAsDataURL(file);
+	});
 }
 
 interface HyperframesPreviewProps {
@@ -104,6 +133,25 @@ function HyperframesPreview({
 	const editor = useEditor();
 	const iframeRef = useRef<HTMLIFrameElement>(null);
 	const [error, setError] = useState<string | null>(null);
+	const [isReplacingImage, setIsReplacingImage] = useState(false);
+	const subscribeDrag = useCallback(
+		(listener: () => void) => editor.timeline.dragSource.subscribe(listener),
+		[editor],
+	);
+	const getActiveDrag = useCallback(
+		() => editor.timeline.dragSource.getActive(),
+		[editor],
+	);
+	const activeDrag = useSyncExternalStore(
+		subscribeDrag,
+		getActiveDrag,
+		noActiveDrag,
+	);
+	const acceptsImageDrop =
+		isStudio &&
+		isNative() &&
+		activeDrag?.type === "media" &&
+		activeDrag.mediaType === "image";
 	const studioTool = useHyperframesStudioStore((state) => state.tool);
 	const setStudioTool = useHyperframesStudioStore((state) => state.setTool);
 	const setPreviewIframe = useHyperframesStudioStore(
@@ -207,6 +255,177 @@ function HyperframesPreview({
 		[isStudio, setPreviewIframe],
 	);
 
+	const resolveMediaDropTarget = useCallback(
+		({ clientX, clientY }: { clientX: number; clientY: number }) => {
+			const iframe = iframeRef.current;
+			if (!iframe) return Promise.resolve<StudioPreviewSelection | null>(null);
+			const rect = iframe.getBoundingClientRect();
+			if (rect.width <= 0 || rect.height <= 0) {
+				return Promise.resolve<StudioPreviewSelection | null>(null);
+			}
+			const requestId = `media-drop-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+			return new Promise<StudioPreviewSelection | null>((resolve) => {
+				const timeout = window.setTimeout(() => {
+					window.removeEventListener("message", onMessage);
+					resolve(null);
+				}, 1500);
+				const onMessage = (event: MessageEvent<PreviewMessage>) => {
+					if (
+						event.source !== iframe.contentWindow ||
+						event.data?.source !== PREVIEW_MESSAGE_SOURCE ||
+						event.data.requestId !== requestId ||
+						(event.data.type !== "media-drop-target" &&
+							event.data.type !== "media-drop-target-cleared")
+					) {
+						return;
+					}
+					window.clearTimeout(timeout);
+					window.removeEventListener("message", onMessage);
+					resolve(event.data.element ?? null);
+				};
+				window.addEventListener("message", onMessage);
+				postStudioPreviewAction({
+					iframe,
+					action: "resolve-media-drop-target",
+					payload: {
+						requestId,
+						x: ((clientX - rect.left) * element.width) / rect.width,
+						y: ((clientY - rect.top) * element.height) / rect.height,
+					},
+				});
+			});
+		},
+		[element.height, element.width],
+	);
+
+	const handleImageDrop = useCallback(
+		async ({ clientX, clientY }: { clientX: number; clientY: number }) => {
+			if (isReplacingImage || !projectId) return;
+			const dragResolution = editor.timeline.dragSource.resolveForDrop();
+			if (!dragResolution) return;
+			setIsReplacingImage(true);
+			try {
+				const [target, dragData] = await Promise.all([
+					resolveMediaDropTarget({ clientX, clientY }),
+					Promise.resolve(dragResolution),
+				]);
+				if (!target) {
+					throw new Error(
+						"Drop the image directly over an image or SVG element",
+					);
+				}
+				if (dragData.type !== "media" || dragData.mediaType !== "image") {
+					throw new Error("Only images can replace preview artwork");
+				}
+				let asset = editor.media
+					.getAssets()
+					.find((item) => item.id === dragData.id);
+				if (!asset) throw new Error("The dropped media asset was not found");
+				if (asset.remoteUrl && !asset.file) {
+					const downloaded = await editor.media.downloadRemoteAsset({
+						projectId,
+						id: asset.id,
+					});
+					if (!downloaded)
+						throw new Error("Could not download the dropped image");
+					asset = downloaded;
+				}
+				if (!asset?.file || asset.type !== "image") {
+					throw new Error("The dropped image is not available as a local file");
+				}
+
+				let sourceHtml = element.html;
+				let stableTarget = target;
+				if (!stableTarget.id && !stableTarget.hfId) {
+					const hfId = `media-target-${crypto.randomUUID()}`;
+					const info = quickValidate(sourceHtml);
+					if (!info) throw new Error("The AI Motion source is not valid");
+					const layer = studioLayerFromPreviewSelection({
+						selection: stableTarget,
+						duration: info.durationSecs,
+					});
+					sourceHtml = await applyStudioLayerPatches({
+						html: sourceHtml,
+						layer,
+						operations: [
+							{
+								type: "html-attribute",
+								property: "data-hf-id",
+								value: hfId,
+							},
+						],
+					});
+					stableTarget = {
+						...stableTarget,
+						key: hfId,
+						hfId,
+						selector: `[data-hf-id="${hfId}"]`,
+					};
+				}
+
+				const result = await nativeInvoke<StudioImageReplaceResult>(
+					"hf_studio_replace_image",
+					{
+						request: {
+							projectId,
+							elementId: element.id,
+							html: sourceHtml,
+							target: { id: stableTarget.id, hfId: stableTarget.hfId },
+							dataUrl: await fileAsDataUrl(asset.file),
+							name: asset.name,
+							fit: "contain",
+						},
+					},
+				);
+				const located = findStudioElement({
+					tracks: editor.scenes.getActiveSceneOrNull()?.tracks ?? null,
+					elementId: element.id,
+				});
+				if (!located || located.element.html !== element.html) {
+					throw new Error(
+						"The scene changed while the image was being prepared; drop it again",
+					);
+				}
+				editor.timeline.updateElements({
+					updates: [
+						{
+							trackId: located.trackId,
+							elementId: located.element.id,
+							patch: {
+								html: result.html,
+								renderedMediaId: undefined,
+								renderHash: undefined,
+							},
+						},
+					],
+				});
+				setPreviewSelection(stableTarget);
+				toast.success(`Replaced ${stableTarget.label} with ${asset.name}`);
+				for (const warning of result.warnings) toast.warning(warning);
+			} catch (reason) {
+				toast.error("Could not replace this element", {
+					description:
+						reason instanceof Error ? reason.message : String(reason),
+				});
+			} finally {
+				setIsReplacingImage(false);
+				postStudioPreviewAction({
+					iframe: iframeRef.current,
+					action: "clear-media-drop-target",
+				});
+			}
+		},
+		[
+			editor,
+			element.html,
+			element.id,
+			isReplacingImage,
+			projectId,
+			resolveMediaDropTarget,
+			setPreviewSelection,
+		],
+	);
+
 	useEffect(() => {
 		if (!isStudio) return;
 		postStudioPreviewAction({
@@ -215,6 +434,14 @@ function HyperframesPreview({
 			payload: { enabled: studioTool === "select" },
 		});
 	}, [isStudio, studioTool, preparedHtml]);
+
+	useEffect(() => {
+		if (acceptsImageDrop || isReplacingImage) return;
+		postStudioPreviewAction({
+			iframe: iframeRef.current,
+			action: "clear-media-drop-target",
+		});
+	}, [acceptsImageDrop, isReplacingImage]);
 
 	useEffect(
 		() => () => {
@@ -362,6 +589,52 @@ function HyperframesPreview({
 					});
 				}}
 			/>
+			{(acceptsImageDrop || isReplacingImage) && (
+				<div
+					className="absolute inset-0 z-40 cursor-copy"
+					onDragOver={(event) => {
+						event.preventDefault();
+						event.dataTransfer.dropEffect = "copy";
+						const rect = iframeRef.current?.getBoundingClientRect();
+						if (!rect || rect.width <= 0 || rect.height <= 0) return;
+						postStudioPreviewAction({
+							iframe: iframeRef.current,
+							action: "resolve-media-drop-target",
+							payload: {
+								requestId: "media-drop-hover",
+								x: ((event.clientX - rect.left) * element.width) / rect.width,
+								y: ((event.clientY - rect.top) * element.height) / rect.height,
+							},
+						});
+					}}
+					onDragLeave={(event) => {
+						if (
+							event.relatedTarget instanceof Node &&
+							event.currentTarget.contains(event.relatedTarget)
+						) {
+							return;
+						}
+						postStudioPreviewAction({
+							iframe: iframeRef.current,
+							action: "clear-media-drop-target",
+						});
+					}}
+					onDrop={(event) => {
+						event.preventDefault();
+						event.stopPropagation();
+						void handleImageDrop({
+							clientX: event.clientX,
+							clientY: event.clientY,
+						});
+					}}
+				>
+					<div className="absolute top-2 right-2 rounded bg-emerald-600/95 px-2 py-1 text-[10px] font-medium text-white shadow">
+						{isReplacingImage
+							? "Applying image…"
+							: "Drop on an image or SVG to replace it"}
+					</div>
+				</div>
+			)}
 			{isStudio && (
 				<div className="absolute top-2 left-2 z-50 flex gap-1 rounded-md border border-white/15 bg-black/75 p-1 shadow-lg backdrop-blur-sm">
 					<button

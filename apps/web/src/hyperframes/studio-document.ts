@@ -41,6 +41,41 @@ export interface StudioPreviewSelection {
 	boundingBox: { x: number; y: number; width: number; height: number };
 }
 
+export function studioLayerFromPreviewSelection({
+	selection,
+	duration,
+}: {
+	selection: StudioPreviewSelection;
+	duration: number;
+}): StudioLayer {
+	return {
+		key: selection.key,
+		id: selection.id,
+		hfId: selection.hfId,
+		selector: selection.selector,
+		label: selection.label,
+		tag: selection.tagName,
+		text: selection.textContent,
+		start: Number(selection.dataAttributes.start) || 0,
+		duration: Number(selection.dataAttributes.duration) || duration,
+		track: Number(selection.dataAttributes["track-index"]) || 0,
+		playbackStart:
+			Number(
+				selection.dataAttributes["media-start"] ??
+					selection.dataAttributes["playback-start"],
+			) || null,
+		playbackStartAttribute: selection.dataAttributes["media-start"]
+			? "media-start"
+			: selection.dataAttributes["playback-start"]
+				? "playback-start"
+				: null,
+		hidden:
+			selection.dataAttributes.hidden === "true" ||
+			selection.dataAttributes.hidden === "1",
+		styles: {},
+	};
+}
+
 export type StudioPatchOperation =
 	| { type: "inline-style"; property: string; value: string | null }
 	| { type: "attribute"; property: string; value: string | null }
@@ -432,10 +467,11 @@ function applyDomPatch({
 	operation: StudioPatchOperation;
 }): void {
 	if (operation.type === "inline-style") {
-		if (!(element instanceof HTMLElement)) return;
+		const styled = element as Element & { style?: CSSStyleDeclaration };
+		if (!styled.style) return;
 		if (operation.value === null)
-			element.style.removeProperty(operation.property);
-		else element.style.setProperty(operation.property, operation.value);
+			styled.style.removeProperty(operation.property);
+		else styled.style.setProperty(operation.property, operation.value);
 		return;
 	}
 	if (operation.type === "attribute") {

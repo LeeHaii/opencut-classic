@@ -24,6 +24,8 @@ export const previewBridgeSource = String.raw`
   var selectedElement = null;
   var selectionOverlay = null;
   var selectionLabel = null;
+  var mediaDropOverlay = null;
+  var mediaDropLabel = null;
 
   function findComposition() {
     root = document.querySelector("[data-composition-id]");
@@ -348,6 +350,45 @@ export const previewBridgeSource = String.raw`
     if (selectionLabel) selectionLabel.textContent = selectionInfo(selectedElement).label;
   }
 
+  function ensureMediaDropOverlay() {
+    if (mediaDropOverlay || !document.body) return;
+    mediaDropOverlay = document.createElement("div");
+    mediaDropOverlay.setAttribute("data-opencut-studio-media-drop", "1");
+    mediaDropOverlay.style.cssText = "position:fixed;pointer-events:none;border:3px solid #22c55e;background:rgba(34,197,94,.10);box-shadow:0 0 0 1px rgba(2,6,23,.65);z-index:2147483647;display:none";
+    mediaDropLabel = document.createElement("div");
+    mediaDropLabel.style.cssText = "position:absolute;left:-3px;bottom:100%;max-width:260px;padding:4px 7px;background:#16a34a;color:white;font:600 11px/1.2 system-ui,sans-serif;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;border-radius:3px 3px 0 0";
+    mediaDropOverlay.appendChild(mediaDropLabel);
+    document.body.appendChild(mediaDropOverlay);
+  }
+
+  function clearMediaDropTarget() {
+    if (mediaDropOverlay) mediaDropOverlay.style.display = "none";
+  }
+
+  function resolveMediaDropTarget(x, y) {
+    var hit = document.elementFromPoint(Number(x) || 0, Number(y) || 0);
+    if (!hit || hit.nodeType !== 1) return null;
+    if (hit.closest && hit.closest("[data-opencut-studio-selection],[data-opencut-studio-media-drop]")) return null;
+    var svg = hit.closest ? hit.closest("svg") : null;
+    if (svg) return svg;
+    return hit.closest ? hit.closest("img") : null;
+  }
+
+  function showMediaDropTarget(element) {
+    ensureMediaDropOverlay();
+    if (!mediaDropOverlay || !element) {
+      clearMediaDropTarget();
+      return;
+    }
+    var rect = element.getBoundingClientRect();
+    mediaDropOverlay.style.display = "block";
+    mediaDropOverlay.style.left = rect.left + "px";
+    mediaDropOverlay.style.top = rect.top + "px";
+    mediaDropOverlay.style.width = Math.max(0, rect.width) + "px";
+    mediaDropOverlay.style.height = Math.max(0, rect.height) + "px";
+    if (mediaDropLabel) mediaDropLabel.textContent = "Replace " + selectionInfo(element).label;
+  }
+
   function selectEditorElement(element, announce) {
     if (!element || element === document.body || element === document.documentElement) {
       element = root;
@@ -411,6 +452,19 @@ export const previewBridgeSource = String.raw`
       }
       return true;
     }
+    if (data.action === "resolve-media-drop-target") {
+      var dropTarget = resolveMediaDropTarget(data.x, data.y);
+      showMediaDropTarget(dropTarget);
+      post(dropTarget ? "media-drop-target" : "media-drop-target-cleared", {
+        requestId: data.requestId,
+        element: dropTarget ? selectionInfo(dropTarget) : undefined
+      });
+      return true;
+    }
+    if (data.action === "clear-media-drop-target") {
+      clearMediaDropTarget();
+      return true;
+    }
     if (!selectedElement || !selectedElement.isConnected) return false;
     if (data.selector) {
       try {
@@ -450,7 +504,7 @@ export const previewBridgeSource = String.raw`
   function serializeSnapshot() {
     var clone = document.documentElement.cloneNode(true);
     clone.setAttribute("xmlns", "http://www.w3.org/1999/xhtml");
-	var unsafe = clone.querySelectorAll("script,iframe,object,embed,meta[http-equiv],[data-opencut-studio-selection]");
+	var unsafe = clone.querySelectorAll("script,iframe,object,embed,meta[http-equiv],[data-opencut-studio-selection],[data-opencut-studio-media-drop]");
     for (var i = 0; i < unsafe.length; i++) unsafe[i].remove();
 
     var originalVideos = document.querySelectorAll("video");

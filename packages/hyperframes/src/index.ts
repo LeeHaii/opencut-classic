@@ -1,19 +1,16 @@
-export type {
-	AgentTurn,
-	AgentChatMessage,
-	AntigravityStatus,
-} from "./types";
-export {
-	DEFAULT_ANTIGRAVITY_MODELS,
-	MIN_ANTIGRAVITY_VERSION,
-} from "./models";
+export type { AgentTurn, AgentChatMessage, AntigravityStatus } from "./types";
+export { DEFAULT_ANTIGRAVITY_MODELS, MIN_ANTIGRAVITY_VERSION } from "./models";
 export { buildAgentPrompt, buildSeedComposition } from "./prompt";
 export {
 	buildMotionDesignSkills,
 	deriveStyleDirection,
 	type StyleDirection,
 } from "./design-skills";
-export { extractHtml, quickValidate, auditCompositionAnimation } from "./extract";
+export {
+	extractHtml,
+	quickValidate,
+	auditCompositionAnimation,
+} from "./extract";
 export type { CompositionInfo } from "./extract";
 export { validateSelectedImageUsage } from "./selected-image";
 export type {
@@ -40,6 +37,7 @@ export type {
 	WebImageSearchResult,
 	WebImageSearchOutcome,
 	WebImageAsset,
+	StudioImageReplaceResult,
 	HfRenderRequest,
 	StudioOpenRequest,
 	StudioOpenResult,

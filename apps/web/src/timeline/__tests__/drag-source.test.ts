@@ -61,3 +61,24 @@ test("can synchronously reserve a pending media asset on drop", () => {
 
 	expect(dragSource.resolveForDrop()).toEqual(pending);
 });
+
+test("notifies preview drop targets when a drag starts and ends", () => {
+	const dragSource = new TimelineDragSource();
+	const snapshots: Array<string | null> = [];
+	const unsubscribe = dragSource.subscribe(() => {
+		snapshots.push(dragSource.getActive()?.id ?? null);
+	});
+	const dragData: MediaDragData = {
+		id: "image-1",
+		type: "media",
+		mediaType: "image",
+		name: "Logo",
+	};
+	dragSource.begin({
+		dataTransfer: { effectAllowed: "none", setData: () => undefined },
+		dragData,
+	});
+	dragSource.end();
+	unsubscribe();
+	expect(snapshots).toEqual(["image-1", null]);
+});

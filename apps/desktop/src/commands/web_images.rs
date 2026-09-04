@@ -1,7 +1,7 @@
 use base64::Engine as _;
 use hyperframes::{
-    WebImageIntent, classify_web_image_intent, composition_dirs_in, derive_web_image_query,
-    media_refs,
+    ImageFit, VisualTarget, WebImageIntent, classify_web_image_intent, composition_dirs_in,
+    derive_web_image_query, media_refs, replace_visual_with_image,
 };
 use reqwest::blocking::{Client, Response};
 use reqwest::redirect::Policy;
@@ -337,6 +337,27 @@ fn search_images_inner(
     })
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StudioImageReplaceRequest {
+    pub project_id: String,
+    pub element_id: String,
+    pub html: String,
+    pub target: VisualTarget,
+    pub data_url: String,
+    pub name: String,
+    #[serde(default)]
+    pub fit: ImageFit,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StudioImageReplaceResult {
+    html: String,
+    asset: WebImageAsset,
+    warnings: Vec<String>,
+}
+
 #[tauri::command]
 pub async fn hf_image_search(
     app: AppHandle,
@@ -630,6 +651,68 @@ pub async fn hf_image_ingest_attachment(
     tauri::async_runtime::spawn_blocking(move || ingest_attachment_inner(app, request))
         .await
         .map_err(|error| format!("attachment ingest task failed: {error}"))?
+}
+
+fn replace_studio_image_inner(
+    app: AppHandle,
+    request: StudioImageReplaceRequest,
+) -> Result<StudioImageReplaceResult, String> {
+    validate_ids(&request.project_id, &request.element_id)?;
+
+    // Reject unsupported or stale targets before creating a project asset.
+    replace_visual_with_image(
+        &request.html,
+        &request.target,
+        "opencut-media://local/validation.png",
+        "validation",
+        &request.name,
+        request.fit,
+    )?;
+
+    let bytes = decode_image_data_url(&request.data_url)?;
+    let root = composition_root(&app, &request.project_id, &request.element_id)?;
+    let name = if request.name.trim().is_empty() {
+        "Dropped image".to_string()
+    } else {
+        request.name
+    };
+    let asset = freeze_image(
+        &root,
+        &bytes,
+        FrozenImageMetadata {
+            provider: "media-bin",
+            name: name.clone(),
+            source_page_url: String::new(),
+            source_image_url: None,
+            author: "User media library".to_string(),
+            license: "User-provided media".to_string(),
+            attribution: "Imported from the project media bin".to_string(),
+            query: None,
+        },
+    )?;
+    let outcome = replace_visual_with_image(
+        &request.html,
+        &request.target,
+        &asset.internal_url,
+        &asset.id,
+        &name,
+        request.fit,
+    )?;
+    Ok(StudioImageReplaceResult {
+        html: outcome.html,
+        asset,
+        warnings: outcome.warnings,
+    })
+}
+
+#[tauri::command]
+pub async fn hf_studio_replace_image(
+    app: AppHandle,
+    request: StudioImageReplaceRequest,
+) -> Result<StudioImageReplaceResult, String> {
+    tauri::async_runtime::spawn_blocking(move || replace_studio_image_inner(app, request))
+        .await
+        .map_err(|error| format!("studio image replacement task failed: {error}"))?
 }
 
 fn path_from_internal_url(value: &str) -> Option<PathBuf> {

@@ -265,6 +265,9 @@ describe("preparePreviewHtml", () => {
 		expect(prepared).toContain('post("selected-image-loaded"');
 		expect(prepared).toContain('post("selected-image-error"');
 		expect(prepared).toContain("data-opencut-studio-selection");
+		expect(prepared).toContain('data.action === "resolve-media-drop-target"');
+		expect(prepared).toContain('post(dropTarget ? "media-drop-target"');
+		expect(prepared).toContain("data-opencut-studio-media-drop");
 		expect(prepared).toContain("</body>");
 	});
 

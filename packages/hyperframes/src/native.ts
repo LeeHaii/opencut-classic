@@ -112,6 +112,12 @@ export interface WebImageAsset {
 	sha256: string;
 }
 
+export interface StudioImageReplaceResult {
+	html: string;
+	asset: WebImageAsset;
+	warnings: string[];
+}
+
 export interface HfRenderRequest {
 	jobId: string;
 	projectId: string;

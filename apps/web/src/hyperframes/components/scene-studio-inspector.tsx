@@ -7,6 +7,7 @@ import {
 	Diamond,
 	Eye,
 	EyeOff,
+	Image as ImageIcon,
 	Layers3,
 	MousePointer2,
 	Palette,
@@ -42,6 +43,7 @@ import {
 	parseStudioDocument,
 	patchCompositionAttribute,
 	postStudioPreviewAction,
+	studioLayerFromPreviewSelection,
 	type StudioLayer,
 	type StudioPatchOperation,
 	type StudioPreviewSelection,
@@ -63,41 +65,6 @@ const STUDIO_EASES = [
 	{ value: "expo.out", label: "Fast settle" },
 	{ value: "back.out(1.4)", label: "Overshoot" },
 ] as const;
-
-function layerFromPreview({
-	selection,
-	duration,
-}: {
-	selection: StudioPreviewSelection;
-	duration: number;
-}): StudioLayer {
-	return {
-		key: selection.key,
-		id: selection.id,
-		hfId: selection.hfId,
-		selector: selection.selector,
-		label: selection.label,
-		tag: selection.tagName,
-		text: selection.textContent,
-		start: Number(selection.dataAttributes.start) || 0,
-		duration: Number(selection.dataAttributes.duration) || duration,
-		track: Number(selection.dataAttributes["track-index"]) || 0,
-		playbackStart:
-			Number(
-				selection.dataAttributes["media-start"] ??
-					selection.dataAttributes["playback-start"],
-			) || null,
-		playbackStartAttribute: selection.dataAttributes["media-start"]
-			? "media-start"
-			: selection.dataAttributes["playback-start"]
-				? "playback-start"
-				: null,
-		hidden:
-			selection.dataAttributes.hidden === "true" ||
-			selection.dataAttributes.hidden === "1",
-		styles: {},
-	};
-}
 
 export function SceneStudioInspector() {
 	const { located, commitHtml } = useActiveStudioElement();
@@ -121,7 +88,7 @@ export function SceneStudioInspector() {
 		);
 		if (timedLayer) return timedLayer;
 		if (previewSelection?.key === selectedLayerKey) {
-			return layerFromPreview({
+			return studioLayerFromPreviewSelection({
 				selection: previewSelection,
 				duration: document.duration,
 			});
@@ -453,6 +420,11 @@ function DesignInspector({
 		Boolean(previewSelection.dataAttributes["composition-id"]);
 	const computed =
 		previewSelection?.key === layer.key ? previewSelection.computedStyles : {};
+	const canReplaceWithMedia = /^(img|image|svg)$/i.test(layer.tag);
+	const currentMediaName =
+		previewSelection?.key === layer.key
+			? previewSelection.dataAttributes["opencut-media-name"]
+			: undefined;
 	const valueFor = ({
 		property,
 		fallback = "",
@@ -561,6 +533,20 @@ function DesignInspector({
 					/>
 				)}
 			</Section>
+
+			{canReplaceWithMedia && (
+				<Section title="Media" icon={<ImageIcon className="size-3" />}>
+					<div className="bg-muted/30 rounded-md px-2 py-2 text-[10px] leading-relaxed">
+						<p className="font-medium">
+							{currentMediaName ?? "Replaceable image artwork"}
+						</p>
+						<p className="text-muted-foreground mt-1">
+							Drag an image from the Media tab and drop it directly on this
+							element in the preview.
+						</p>
+					</div>
+				</Section>
+			)}
 
 			<Section title="Timing" icon={<Clock3 className="size-3" />}>
 				<PropertyField
