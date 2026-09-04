@@ -2,7 +2,6 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { PanelView } from "@/components/editor/panels/assets/views/base-panel";
-import { useAssetsPanelStore } from "@/components/editor/panels/assets/assets-panel-store";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Spinner } from "@/components/ui/spinner";
@@ -324,16 +323,8 @@ export function StockPanelView() {
 					<div className="border-border/60 bg-muted/30 text-muted-foreground flex items-start gap-1.5 rounded-md border px-2 py-1.5 text-[10px] leading-relaxed">
 						<AlertTriangle className="text-primary mt-px size-3 shrink-0" />
 						<p>
-							Add a Pexels or Pixabay API key to search.{" "}
-							<button
-								type="button"
-								className="text-foreground underline underline-offset-2"
-								onClick={() =>
-									useAssetsPanelStore.getState().setActiveTab("ai")
-								}
-							>
-								Set keys in the AI panel
-							</button>
+							Add a Pexels or Pixabay API key from the Generate with AI setup
+							screen to search those providers.
 						</p>
 					</div>
 				)}

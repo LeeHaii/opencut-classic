@@ -13,7 +13,6 @@ import { SoundsView } from "@/sounds/components/assets-view";
 import { StickersView } from "@/stickers/components/assets-view";
 import { TextView } from "@/text/components/assets-view";
 import { EffectsView } from "@/effects/components/assets-view";
-import { AiPanelView } from "@/plugins/rhymx/ui/ai-panel-view";
 import { MotionLibraryView } from "@/plugins/rhymx/ui/motion-library-view";
 import { StockPanelView } from "@/plugins/rhymx/ui/stock-panel-view";
 import { AiMotionPanelView } from "@/hyperframes/components/ai-motion-panel";
@@ -40,7 +39,6 @@ export function AssetsPanel() {
 				Adjustment view coming soon...
 			</div>
 		),
-		ai: <AiPanelView />,
 		motion: <MotionLibraryView />,
 		hyperframes: <AiMotionPanelView />,
 		studio: <StudioPanelView />,

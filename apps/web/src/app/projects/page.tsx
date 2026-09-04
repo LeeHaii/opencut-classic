@@ -5,7 +5,6 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import type { KeyboardEvent, MouseEvent } from "react";
 import { useEffect, useState } from "react";
-import { toast } from "sonner";
 import type { EditorCore } from "@/core";
 import { MigrationDialog } from "@/project/components/migration-dialog";
 import { StoragePersistenceDialog } from "@/services/storage/components/storage-persistence-dialog";
@@ -521,21 +520,13 @@ function SortDropdown({ children }: { children: React.ReactNode }) {
 }
 
 function NewProjectButton() {
-	const editor = useEditor();
 	const router = useRouter();
-
-	const handleCreateProject = async () => {
-		const projectId = await editor.project.createNewProject({
-			name: "New project",
-		});
-		router.push(`/editor/${projectId}`);
-	};
 
 	return (
 		<Button
 			size="lg"
 			className="flex px-5 md:px-6"
-			onClick={handleCreateProject}
+			onClick={() => router.push("/projects/new")}
 		>
 			<span className="text-sm font-medium hidden md:block">New project</span>
 			<span className="text-sm font-medium block md:hidden">New</span>
@@ -961,20 +952,6 @@ function EmptyState() {
 	const editor = useEditor();
 	const savedProjects = editor.project.getSavedProjects();
 
-	const handleCreateProject = async () => {
-		try {
-			const projectId = await editor.project.createNewProject({
-				name: "New project",
-			});
-			router.push(`/editor/${projectId}`);
-		} catch (error) {
-			toast.error("Failed to create project", {
-				description:
-					error instanceof Error ? error.message : "Please try again",
-			});
-		}
-	};
-
 	if (savedProjects.length > 0) {
 		return (
 			<div className="flex flex-col items-center justify-center gap-5 py-16 text-center">
@@ -1016,7 +993,11 @@ function EmptyState() {
 					videos. All privately.
 				</p>
 			</div>
-			<Button size="lg" className="gap-2" onClick={handleCreateProject}>
+			<Button
+				size="lg"
+				className="gap-2"
+				onClick={() => router.push("/projects/new")}
+			>
 				<HugeiconsIcon icon={PlusSignIcon} />
 				Create your first project
 			</Button>

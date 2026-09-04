@@ -13,7 +13,6 @@ import {
 	TextIcon,
 	Settings01Icon,
 	SlidersHorizontalIcon,
-	AiMagicIcon,
 	SparklesIcon,
 	Video01Icon,
 } from "@hugeicons/core-free-icons";
@@ -29,7 +28,6 @@ export const TAB_KEYS = [
 	"transitions",
 	"captions",
 	"adjustment",
-	"ai",
 	"motion",
 	"hyperframes",
 	"studio",
@@ -82,10 +80,6 @@ export const tabs = {
 	adjustment: {
 		icon: createHugeiconsIcon({ icon: SlidersHorizontalIcon }),
 		label: "Adjustment",
-	},
-	ai: {
-		icon: createHugeiconsIcon({ icon: AiMagicIcon }),
-		label: "AI",
 	},
 	motion: {
 		icon: createHugeiconsIcon({ icon: SparklesIcon }),

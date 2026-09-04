@@ -37,7 +37,11 @@ export function getStockPreviewOverlaySource({
 	};
 }
 
-function StockPreviewOverlay({ candidate }: { candidate: StockCandidate }) {
+export function StockPreviewOverlay({
+	candidate,
+}: {
+	candidate: StockCandidate;
+}) {
 	const setPreviewCandidate = useRhymxStore(
 		(state) => state.setPreviewCandidate,
 	);
