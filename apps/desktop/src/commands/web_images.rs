@@ -546,7 +546,14 @@ fn decode_image_data_url(value: &str) -> Result<Vec<u8>, String> {
     let (metadata, encoded) = value
         .split_once(',')
         .ok_or_else(|| "attached image is not a valid data URL".to_string())?;
-    if !metadata.starts_with("data:image/") || !metadata.ends_with(";base64") {
+    let declared_mime = metadata
+        .strip_prefix("data:")
+        .and_then(|value| value.strip_suffix(";base64"))
+        .ok_or_else(|| "attached image must be a base64 data URL".to_string())?;
+    if !declared_mime.starts_with("image/")
+        && declared_mime != "application/octet-stream"
+        && !declared_mime.is_empty()
+    {
         return Err("attached image must be a base64 image data URL".to_string());
     }
     if encoded.len() > (MAX_IMAGE_BYTES * 4 / 3) + 8 {
@@ -558,6 +565,8 @@ fn decode_image_data_url(value: &str) -> Result<Vec<u8>, String> {
     if bytes.len() > MAX_IMAGE_BYTES {
         return Err("attached image exceeds the size limit".to_string());
     }
+    sniff_image(&bytes)
+        .map_err(|_| "attached image bytes are not a supported PNG or JPEG image".to_string())?;
     Ok(bytes)
 }
 
@@ -826,6 +835,17 @@ mod tests {
         )
         .unwrap();
         assert_eq!(sniff_image(&bytes).unwrap(), ("image/png", "png", 1, 1));
+        let generic = format!(
+            "data:application/octet-stream;base64,{}",
+            base64::engine::general_purpose::STANDARD.encode(&bytes)
+        );
+        assert_eq!(decode_image_data_url(&generic).unwrap(), bytes);
+        let missing_mime = format!(
+            "data:;base64,{}",
+            base64::engine::general_purpose::STANDARD.encode(&bytes)
+        );
+        assert_eq!(decode_image_data_url(&missing_mime).unwrap(), bytes);
         assert!(decode_image_data_url("data:text/plain;base64,SGVsbG8=").is_err());
+        assert!(decode_image_data_url("data:application/octet-stream;base64,SGVsbG8=").is_err());
     }
 }

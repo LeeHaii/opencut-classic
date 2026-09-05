@@ -24,6 +24,7 @@ import {
 } from "@/services/storage/migrations";
 import type { Bookmark, SceneTracks, TScene } from "@/timeline";
 import { roundMediaTime } from "@/wasm";
+import { restorePersistedMediaFile } from "@/media/image-mime";
 
 interface ProjectMediaAdapters {
 	mediaMetadataAdapter: IndexedDBAdapter<MediaAssetData>;
@@ -144,6 +145,7 @@ class StorageService {
 			id: mediaAsset.id,
 			name: mediaAsset.name,
 			type: mediaAsset.type,
+			mimeType: mediaAsset.file?.type || mediaAsset.mimeType,
 			size: mediaAsset.file?.size ?? 0,
 			lastModified: mediaAsset.file?.lastModified ?? Date.now(),
 			width: mediaAsset.width,
@@ -388,7 +390,14 @@ class StorageService {
 		]);
 
 		if (!metadata) return null;
-		return this.materializeMediaAsset({ metadata, file });
+		const asset = await this.materializeMediaAsset({ metadata, file });
+		if (asset?.mimeType && asset.mimeType !== metadata.mimeType) {
+			await mediaMetadataAdapter.set({
+				key: asset.id,
+				value: this.mediaMetadata(asset),
+			});
+		}
+		return asset;
 	}
 
 	private async materializeMediaAsset({
@@ -405,6 +414,7 @@ class StorageService {
 				id: metadata.id,
 				name: metadata.name,
 				type: metadata.type,
+				mimeType: metadata.mimeType,
 				width: metadata.width,
 				height: metadata.height,
 				duration: metadata.duration,
@@ -417,28 +427,39 @@ class StorageService {
 			};
 		}
 
+		const restoredFile = await restorePersistedMediaFile({
+			file,
+			name: metadata.name,
+			lastModified: metadata.lastModified,
+			mediaType: metadata.type,
+			declaredMimeType: metadata.mimeType,
+		});
 		let url: string;
-		if (metadata.type === "image" && (!file.type || file.type === "")) {
+		if (
+			metadata.type === "image" &&
+			(!restoredFile.type || restoredFile.type === "")
+		) {
 			try {
-				const text = await file.text();
+				const text = await restoredFile.text();
 				if (text.trim().startsWith("<svg")) {
 					const svgBlob = new Blob([text], { type: "image/svg+xml" });
 					url = URL.createObjectURL(svgBlob);
 				} else {
-					url = URL.createObjectURL(file);
+					url = URL.createObjectURL(restoredFile);
 				}
 			} catch {
-				url = URL.createObjectURL(file);
+				url = URL.createObjectURL(restoredFile);
 			}
 		} else {
-			url = URL.createObjectURL(file);
+			url = URL.createObjectURL(restoredFile);
 		}
 
 		return {
 			id: metadata.id,
 			name: metadata.name,
 			type: metadata.type,
-			file,
+			mimeType: restoredFile.type || metadata.mimeType,
+			file: restoredFile,
 			url,
 			width: metadata.width,
 			height: metadata.height,
@@ -535,7 +556,26 @@ class StorageService {
 			}),
 		);
 
-		return mediaItems.filter((item): item is MediaAsset => item != null);
+		const loadedItems = mediaItems.filter(
+			(item): item is MediaAsset => item != null,
+		);
+		const metadataById = new Map(
+			metadataItems.map((metadata) => [metadata.id, metadata]),
+		);
+		const repairedItems = loadedItems.filter((item) => {
+			const metadata = metadataById.get(item.id);
+			return item.mimeType && item.mimeType !== metadata?.mimeType;
+		});
+		if (repairedItems.length > 0) {
+			await mediaMetadataAdapter.setMany(
+				repairedItems.map((item) => ({
+					key: item.id,
+					value: this.mediaMetadata(item),
+				})),
+			);
+		}
+
+		return loadedItems;
 	}
 
 	async deleteMediaAsset({

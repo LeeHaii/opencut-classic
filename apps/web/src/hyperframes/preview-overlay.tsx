@@ -44,6 +44,7 @@ import {
 import { parseStudioRuntimeMotionSnapshot } from "./studio-animations";
 import { useHyperframesStudioStore } from "./studio-store";
 import { findStudioElement } from "./use-studio-element";
+import { studioImageFileAsDataUrl } from "@/media/image-mime";
 
 interface PreviewMessage {
 	source?: string;
@@ -55,19 +56,6 @@ interface PreviewMessage {
 }
 
 const noActiveDrag = () => null;
-
-function fileAsDataUrl(file: File): Promise<string> {
-	return new Promise((resolve, reject) => {
-		const reader = new FileReader();
-		reader.onload = () =>
-			typeof reader.result === "string"
-				? resolve(reader.result)
-				: reject(new Error("Could not read the dropped image"));
-		reader.onerror = () =>
-			reject(reader.error ?? new Error("Could not read image"));
-		reader.readAsDataURL(file);
-	});
-}
 
 interface HyperframesPreviewProps {
 	element: HyperframesElement;
@@ -371,7 +359,7 @@ function HyperframesPreview({
 							elementId: element.id,
 							html: sourceHtml,
 							target: { id: stableTarget.id, hfId: stableTarget.hfId },
-							dataUrl: await fileAsDataUrl(asset.file),
+							dataUrl: await studioImageFileAsDataUrl({ file: asset.file }),
 							name: asset.name,
 							fit: "contain",
 						},

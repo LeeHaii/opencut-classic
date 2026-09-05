@@ -18,6 +18,8 @@ export interface MediaAssetData {
 	id: string;
 	name: string;
 	type: MediaType;
+	/** Original media MIME subtype; OPFS itself does not preserve File.type. */
+	mimeType?: string;
 	size: number;
 	lastModified: number;
 	width?: number;
