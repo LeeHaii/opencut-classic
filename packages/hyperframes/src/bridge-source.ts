@@ -155,6 +155,77 @@ export const previewBridgeSource = String.raw`
     return parts.join(" > ");
   }
 
+  var TEXT_BEARING_TAGS = {
+    a: 1, button: 1, blockquote: 1, div: 1, em: 1, figcaption: 1,
+    h1: 1, h2: 1, h3: 1, h4: 1, h5: 1, h6: 1,
+    label: 1, li: 1, p: 1, small: 1, span: 1, strong: 1, td: 1, th: 1
+  };
+
+  function isEditableTextLeaf(element) {
+    if (!element || element.nodeType !== 1) return false;
+    if (!TEXT_BEARING_TAGS[element.tagName.toLowerCase()]) return false;
+    if (element.children.length !== 0 || element.isContentEditable) return false;
+    return (element.textContent || "").trim().length > 0;
+  }
+
+  function textFieldInfo(element, index, total, source) {
+    var selector = selectorForElement(element);
+    var id = element.id || null;
+    var hfId = element.getAttribute("data-hf-id");
+    return {
+      key: id || hfId || selector,
+      id: id,
+      hfId: hfId,
+      selector: selector,
+      label: total === 1 ? "Text" : "Text " + (index + 1),
+      tag: element.tagName.toLowerCase(),
+      text: element.textContent || "",
+      source: source
+    };
+  }
+
+  function collectTextFields(element) {
+    if (!element || element.nodeType !== 1) {
+      return { fields: [], disabledReason: null };
+    }
+    var hasText = (element.textContent || "").trim().length > 0;
+    if (!hasText) return { fields: [], disabledReason: null };
+    if (element.hasAttribute("data-composition-id")) {
+      return {
+        fields: [],
+        disabledReason: "Select a text element inside the composition to edit it."
+      };
+    }
+    if (isEditableTextLeaf(element)) {
+      return { fields: [textFieldInfo(element, 0, 1, "self")], disabledReason: null };
+    }
+
+    var matches = element.querySelectorAll(
+      "a,button,blockquote,div,em,figcaption,h1,h2,h3,h4,h5,h6,label,li,p,small,span,strong,td,th"
+    );
+    var leaves = [];
+    for (var i = 0; i < matches.length; i++) {
+      var candidate = matches[i];
+      if (!isEditableTextLeaf(candidate)) continue;
+      var timedAncestor = candidate.closest ? candidate.closest("[data-start]") : null;
+      if (timedAncestor && timedAncestor !== element && element.contains(timedAncestor)) continue;
+      leaves.push(candidate);
+      if (leaves.length >= 50) break;
+    }
+    if (leaves.length > 0) {
+      return {
+        fields: leaves.map(function (leaf, index) {
+          return textFieldInfo(leaf, index, leaves.length, "descendant");
+        }),
+        disabledReason: null
+      };
+    }
+    return {
+      fields: [],
+      disabledReason: "Select a text child in the preview to edit it without flattening this layer."
+    };
+  }
+
   function readComputedStyleSubset(element) {
     var result = {};
     var computed = window.getComputedStyle(element);
@@ -183,7 +254,9 @@ export const previewBridgeSource = String.raw`
   function selectionInfo(element) {
     var selector = selectorForElement(element);
     var rect = element.getBoundingClientRect();
-    var text = (element.textContent || "").trim().replace(/\s+/g, " ");
+    var textContent = element.textContent || "";
+    var labelText = textContent.trim().replace(/\s+/g, " ");
+    var textEditing = collectTextFields(element);
     var id = element.id || null;
     var hfId = element.getAttribute("data-hf-id");
     return {
@@ -191,9 +264,11 @@ export const previewBridgeSource = String.raw`
       id: id,
       hfId: hfId,
       selector: selector,
-      label: element.getAttribute("data-label") || element.getAttribute("aria-label") || id || text.slice(0, 40) || element.tagName.toLowerCase(),
+      label: element.getAttribute("data-label") || element.getAttribute("aria-label") || id || labelText.slice(0, 40) || element.tagName.toLowerCase(),
       tagName: element.tagName.toLowerCase(),
-      textContent: text.slice(0, 500),
+      textContent: textContent,
+      textFields: textEditing.fields,
+      textDisabledReason: textEditing.disabledReason,
       dataAttributes: readDataAttributes(element),
       computedStyles: readComputedStyleSubset(element),
       boundingBox: { x: rect.x, y: rect.y, width: rect.width, height: rect.height }
@@ -466,22 +541,23 @@ export const previewBridgeSource = String.raw`
       return true;
     }
     if (!selectedElement || !selectedElement.isConnected) return false;
+    var actionElement = selectedElement;
     if (data.selector) {
       try {
-        selectedElement = document.querySelector(String(data.selector)) || selectedElement;
+        actionElement = document.querySelector(String(data.selector)) || selectedElement;
       } catch (error) { /* invalid selector */ }
     }
     if (data.action === "patch-style") {
-      selectedElement.style.setProperty(String(data.property || ""), String(data.value || ""));
+      actionElement.style.setProperty(String(data.property || ""), String(data.value || ""));
     } else if (data.action === "patch-attribute") {
       var attr = String(data.property || "");
       if (attr.indexOf("data-") !== 0) attr = "data-" + attr;
-      if (data.value === null) selectedElement.removeAttribute(attr);
-      else selectedElement.setAttribute(attr, String(data.value));
-	  duration = readDuration();
-	  updateTimedElements();
+      if (data.value === null) actionElement.removeAttribute(attr);
+      else actionElement.setAttribute(attr, String(data.value));
+      duration = readDuration();
+      updateTimedElements();
     } else if (data.action === "patch-text") {
-      selectedElement.textContent = String(data.value || "");
+      actionElement.textContent = String(data.value == null ? "" : data.value);
     } else {
       return false;
     }

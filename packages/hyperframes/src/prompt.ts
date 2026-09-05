@@ -93,6 +93,7 @@ Hard requirements:
 - Keep a single composition root with id="${compositionId}", data-composition-id="${compositionId}", data-start="0", data-duration="${durationSecs}", data-width="${width}", data-height="${height}".
 - The child root MUST NOT have data-track-index and its data-start must remain exactly zero; the host timeline controls where the whole child starts.
 - Every timed visual uses class="clip", data-start and data-duration in seconds, an integer data-track-index, plus a unique stable id attribute.
+- Give every user-visible text leaf, including nested labels and captions, a unique stable id or data-hf-id so its copy can be edited independently in Scene Studio.
 - MANDATORY ANIMATION CONTRACT: load GSAP (<script src="https://cdn.jsdelivr.net/npm/gsap@3/dist/gsap.min.js"></script>) and register exactly ONE paused timeline as window.__timelines["${compositionId}"]. Drive ALL motion through tweens added to it. A composition without this registered timeline renders as a frozen frame and is invalid.
 - Use literal, stable CSS selector strings in GSAP calls (prefer unique element ids or data-hf-id attributes). Do not build animation targets through variables or string concatenation. Use GSAP percentage keyframes when authoring motion intended for detailed Studio editing; ordinary from/to/fromTo tweens remain supported as two endpoint keys.
 - Never animate with CSS transitions, CSS @keyframes, setTimeout, Date.now, Math.random, autoplaying media or wall-clock timing — CSS-only motion cannot be seeked and will appear static in preview and export.

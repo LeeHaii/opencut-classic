@@ -15,6 +15,7 @@ import {
 } from "../src/prepare-preview.js";
 import { internalMediaUrl, parseInternalMediaUrl } from "../src/media-url.js";
 import { validateSelectedImageUsage } from "../src/selected-image.js";
+import { previewBridgeSource } from "../src/bridge-source.js";
 
 const sample = (id: string) => `<!DOCTYPE html><html><body>
 <div id="${id}" data-composition-id="${id}" data-start="0" data-duration="3" data-width="1920" data-height="1080">
@@ -108,6 +109,7 @@ describe("prompt + seed", () => {
 		expect(prompt).toContain('window.__timelines["s1"]');
 		expect(prompt).toContain("MANDATORY ANIMATION CONTRACT");
 		expect(prompt).toContain("literal, stable CSS selector strings");
+		expect(prompt).toContain("every user-visible text leaf");
 		expect(seed).toContain('tl.from("#s1 h1"');
 		expect(seed).not.toContain("rootSel");
 		expect(prompt).not.toContain("${");
@@ -253,6 +255,10 @@ describe("design skills", () => {
 });
 
 describe("preparePreviewHtml", () => {
+	test("keeps the injected preview bridge syntactically valid", () => {
+		expect(() => new Function(previewBridgeSource)).not.toThrow();
+	});
+
 	test("appends bridge and strips nothing from source", () => {
 		const prepared = preparePreviewHtml(sample("d4"));
 		expect(prepared).toContain(PREVIEW_MESSAGE_SOURCE);
@@ -265,6 +271,9 @@ describe("preparePreviewHtml", () => {
 		expect(prepared).toContain('post("selected-image-loaded"');
 		expect(prepared).toContain('post("selected-image-error"');
 		expect(prepared).toContain("data-opencut-studio-selection");
+		expect(prepared).toContain("TEXT_BEARING_TAGS");
+		expect(prepared).toContain("collectTextFields");
+		expect(prepared).toContain("actionElement.textContent");
 		expect(prepared).toContain('data.action === "resolve-media-drop-target"');
 		expect(prepared).toContain('post(dropTarget ? "media-drop-target"');
 		expect(prepared).toContain("data-opencut-studio-media-drop");

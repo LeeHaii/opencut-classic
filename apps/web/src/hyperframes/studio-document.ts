@@ -11,6 +11,8 @@ export interface StudioLayer {
 	label: string;
 	tag: string;
 	text: string;
+	textFields: StudioTextField[];
+	textDisabledReason: string | null;
 	start: number;
 	duration: number;
 	track: number;
@@ -18,6 +20,17 @@ export interface StudioLayer {
 	playbackStartAttribute: "media-start" | "playback-start" | null;
 	hidden: boolean;
 	styles: Record<string, string>;
+}
+
+export interface StudioTextField {
+	key: string;
+	id: string | null;
+	hfId: string | null;
+	selector: string;
+	label: string;
+	tag: string;
+	text: string;
+	source: "self" | "descendant";
 }
 
 export interface StudioDocument {
@@ -36,6 +49,8 @@ export interface StudioPreviewSelection {
 	label: string;
 	tagName: string;
 	textContent: string;
+	textFields: StudioTextField[];
+	textDisabledReason: string | null;
 	dataAttributes: Record<string, string>;
 	computedStyles: Record<string, string>;
 	boundingBox: { x: number; y: number; width: number; height: number };
@@ -56,6 +71,8 @@ export function studioLayerFromPreviewSelection({
 		label: selection.label,
 		tag: selection.tagName,
 		text: selection.textContent,
+		textFields: selection.textFields ?? [],
+		textDisabledReason: selection.textDisabledReason ?? null,
 		start: Number(selection.dataAttributes.start) || 0,
 		duration: Number(selection.dataAttributes.duration) || duration,
 		track: Number(selection.dataAttributes["track-index"]) || 0,
@@ -389,6 +406,8 @@ export function parseStudioDocument(html: string): StudioDocument | null {
 					.trim()
 					.replace(/\s+/g, " ")
 					.slice(0, 120),
+				textFields: [],
+				textDisabledReason: null,
 				start: Math.max(
 					0,
 					finiteNumber({ value: element.getAttribute("data-start") }),
