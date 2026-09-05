@@ -35,7 +35,11 @@ import {
 	bookmarkNotesPreviewOverlay,
 	getBookmarkPreviewOverlaySource,
 } from "@/timeline/bookmarks/index";
-import { getHyperframesPreviewOverlaySource } from "@/hyperframes/preview-overlay";
+import {
+	findHyperframesPreviewElement,
+	getHyperframesPreviewOverlaySource,
+} from "@/hyperframes/preview-overlay";
+import { usePreviewPresentation } from "@/hyperframes/use-preview-presentation";
 import { usePlaybackTime } from "@/hyperframes/use-playback-time";
 import { useHyperframesStudioStore } from "@/hyperframes/studio-store";
 import { useRhymxStore } from "@/plugins/rhymx/state/rhymx-store";
@@ -215,15 +219,42 @@ function PlaybackOverlayPreviewPanel({
 }) {
 	const editor = useEditor();
 	const currentTime = usePlaybackTime();
+	const studioElementId = useHyperframesStudioStore(
+		(state) => state.activeElementId,
+	);
+	const activeSceneId = activeScene?.id ?? null;
+	// The canvas holds the last project frame at the terminal playhead. The
+	// iframe owner must use that same sample, not the exclusive project end.
+	const previewTime = studioElementId
+		? currentTime
+		: Math.min(currentTime, editor.timeline.getLastFrameTime());
+	const desiredHyperframesElement = useMemo(
+		() =>
+			activeScene
+				? findHyperframesPreviewElement({
+						tracks: activeScene.tracks,
+						timelineTime: previewTime,
+						studioElementId,
+					})
+				: null,
+		[activeScene, previewTime, studioElementId],
+	);
+	const {
+		presentedElement,
+		canvasCommitSuspended,
+		canvasPresentationKey,
+		onReady: handleHyperframesFramePresented,
+		onCanvasCommitted: handleFrameRendered,
+	} = usePreviewPresentation({
+		desiredElement: desiredHyperframesElement,
+		scope: `${activeSceneId ?? "none"}:${studioElementId ?? "timeline"}`,
+	});
 	const activeGuide = usePreviewStore((state) => state.activeGuide);
 	const overlays = usePreviewStore((state) => state.overlays);
 	const setOverlayVisibility = usePreviewStore(
 		(state) => state.setOverlayVisibility,
 	);
 	const previewCandidate = useRhymxStore((state) => state.previewCandidate);
-	const studioElementId = useHyperframesStudioStore(
-		(state) => state.activeElementId,
-	);
 	const showBookmarkNotes = isPreviewOverlayVisible({
 		overlay: bookmarkNotesPreviewOverlay,
 		overlays,
@@ -255,9 +286,11 @@ function PlaybackOverlayPreviewPanel({
 					activeScene && canvasSize
 						? getHyperframesPreviewOverlaySource({
 								tracks: activeScene.tracks,
-								timelineTime: currentTime,
+								timelineTime: previewTime,
+								presentedElement,
 								projectCanvasSize: canvasSize,
 								studioElementId,
+								onFramePresented: handleHyperframesFramePresented,
 							})
 						: { definitions: [], instances: [] },
 					previewCandidate
@@ -272,6 +305,9 @@ function PlaybackOverlayPreviewPanel({
 			activeScene,
 			canvasSize,
 			currentTime,
+			previewTime,
+			presentedElement,
+			handleHyperframesFramePresented,
 			previewCandidate,
 			showBookmarkNotes,
 			studioElementId,
@@ -291,6 +327,9 @@ function PlaybackOverlayPreviewPanel({
 			overlayControls={overlayControls}
 			overlayInstances={overlaySource.instances}
 			onOverlayVisibilityChange={setOverlayVisibility}
+			onFrameRendered={handleFrameRendered}
+			canvasCommitSuspended={canvasCommitSuspended}
+			canvasPresentationKey={canvasPresentationKey}
 		/>
 	);
 }

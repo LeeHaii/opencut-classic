@@ -93,6 +93,17 @@ fn set_attribute(tag: &str, name: &str, value: &str) -> String {
     )
 }
 
+fn remove_attribute(tag: &str, name: &str) -> String {
+    let pattern = Regex::new(&format!(
+        r#"(?i)\s{}(?:\s*=\s*(?:\"[^\"]*\"|'[^']*'|[^\s>]+))?"#,
+        regex::escape(name)
+    ));
+    pattern
+        .ok()
+        .map(|pattern| pattern.replace_all(tag, "").into_owned())
+        .unwrap_or_else(|| tag.to_string())
+}
+
 fn find_target(html: &str, target: &VisualTarget) -> Option<scan::TagSpan> {
     target
         .id
@@ -133,7 +144,8 @@ fn matching_close_range(
 }
 
 fn marked_tag(tag: &str, media_id: &str, media_name: &str, fit: ImageFit) -> String {
-    let tag = set_attribute(tag, "data-opencut-media-id", media_id);
+    let tag = remove_attribute(tag, "data-opencut-selected-image");
+    let tag = set_attribute(&tag, "data-opencut-media-id", media_id);
     let tag = set_attribute(&tag, "data-opencut-media-name", media_name);
     set_attribute(&tag, "data-opencut-media-fit", fit.as_str())
 }
@@ -232,7 +244,9 @@ mod tests {
 
     #[test]
     fn replaces_img_source_and_preserves_layout() {
-        let html = document(r#"<img id="hero" class="wide" src="old.png">"#);
+        let html = document(
+            r#"<img id="hero" class="wide" src="old.png" data-opencut-selected-image="old-search-result">"#,
+        );
         let result = replace_visual_with_image(
             &html,
             &VisualTarget {
@@ -249,6 +263,7 @@ mod tests {
         assert!(result.html.contains("src=\"opencut-media://local/"));
         assert!(result.html.contains("data-opencut-media-fit=\"cover\""));
         assert!(result.html.contains("alt=\"Photo &amp; portrait\""));
+        assert!(!result.html.contains("data-opencut-selected-image"));
     }
 
     #[test]

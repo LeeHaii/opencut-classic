@@ -8,6 +8,13 @@ export const previewBridgeSource = String.raw`
 (function () {
   var PARENT_SOURCE = "hf-parent";
   var SELF_SOURCE = "opencut-hf-preview";
+  var bridgeScript = document.currentScript;
+  var PREVIEW_TOKEN = bridgeScript
+    ? bridgeScript.getAttribute("data-preview-token") || ""
+    : "";
+  var PLAYBACK_MODE = bridgeScript && bridgeScript.getAttribute("data-playback-mode") === "external"
+    ? "external"
+    : "internal";
   var MAX_TRIES = 80;
   var POLL_MS = 100;
 
@@ -16,16 +23,29 @@ export const previewBridgeSource = String.raw`
   var compositionId = null;
   var duration = 0;
   var currentTime = 0;
+  // A host can reach the clip's exclusive end before it removes the iframe.
+  // Preserve the latest in-range sample so that exact-end control messages do
+  // not hide every timed node for one frame.
+  var visualTime = 0;
   var playing = false;
   var playbackRate = 1;
   var lastTick = 0;
   var ready = false;
+  var pendingSeek = null;
+  var pendingPresentationRequestId = null;
+  var presentationScheduled = false;
+  var hasPresentedFrame = false;
   var editorEnabled = false;
   var selectedElement = null;
   var selectionOverlay = null;
   var selectionLabel = null;
   var mediaDropOverlay = null;
   var mediaDropLabel = null;
+  // Generated animated documents register a timeline, sometimes on load.
+  // Static HTML compositions remain supported without requiring GSAP.
+  var expectsTimeline = Array.prototype.some.call(document.scripts, function (script) {
+    return script !== bridgeScript && /__timelines/.test(script.textContent || "");
+  });
 
   function findComposition() {
     root = document.querySelector("[data-composition-id]");
@@ -37,6 +57,7 @@ export const previewBridgeSource = String.raw`
       var keys = Object.keys(window.__timelines);
       if (keys.length === 1) timeline = window.__timelines[keys[0]];
     }
+    if (expectsTimeline && (!timeline || typeof timeline.seek !== "function")) return false;
     var attr = Number.parseFloat(root.getAttribute("data-duration"));
     if (Number.isFinite(attr) && attr > 0) {
       duration = attr;
@@ -60,7 +81,7 @@ export const previewBridgeSource = String.raw`
     }
   }
 
-  function updateTimedElements() {
+  function updateTimedElements(time) {
     var timed = document.querySelectorAll("[data-start]");
     for (var i = 0; i < timed.length; i++) {
       var el = timed[i];
@@ -68,7 +89,7 @@ export const previewBridgeSource = String.raw`
       var dur = Number.parseFloat(el.getAttribute("data-duration")) || 0;
       var end = dur > 0 ? start + dur : Number.POSITIVE_INFINITY;
       var authoredHidden = el.getAttribute("data-hidden");
-      var visible = authoredHidden !== "true" && authoredHidden !== "1" && currentTime >= start - 1e-4 && currentTime < end;
+      var visible = authoredHidden !== "true" && authoredHidden !== "1" && time >= start - 1e-4 && time < end;
       if (visible && el.style.display === "none") {
         el.style.display = "";
       } else if (!visible && el.style.display !== "none") {
@@ -77,7 +98,7 @@ export const previewBridgeSource = String.raw`
       if (visible && el.tagName === "VIDEO") {
         var video = el;
         if (Number.isFinite(video.duration) && video.duration > 0) {
-          var local = currentTime - start;
+          var local = time - start;
           var target = Math.min(local, video.duration - 0.05);
           if (Math.abs(video.currentTime - target) > 0.15 && !video.paused) {
             video.currentTime = Math.max(0, target);
@@ -90,7 +111,11 @@ export const previewBridgeSource = String.raw`
 
   function post(type, extra) {
     try {
-      parent.postMessage(Object.assign({ source: SELF_SOURCE, type: type }, extra || {}), "*");
+      parent.postMessage(Object.assign({
+        source: SELF_SOURCE,
+        type: type,
+        previewToken: PREVIEW_TOKEN
+      }, extra || {}), "*");
     } catch (e) { /* parent unreachable */ }
   }
 
@@ -100,6 +125,8 @@ export const previewBridgeSource = String.raw`
       (function (image) {
         var reported = false;
         var imageId = image.getAttribute("data-opencut-selected-image") || "selected image";
+        var authoredSource = image.getAttribute("src") || "";
+        if (authoredSource.indexOf("opencut-media://local/") === 0) return;
         function reportLoaded() {
           if (reported) return;
           reported = true;
@@ -555,7 +582,7 @@ export const previewBridgeSource = String.raw`
       if (data.value === null) actionElement.removeAttribute(attr);
       else actionElement.setAttribute(attr, String(data.value));
       duration = readDuration();
-      updateTimedElements();
+      updateTimedElements(visualTime);
     } else if (data.action === "patch-text") {
       actionElement.textContent = String(data.value == null ? "" : data.value);
     } else {
@@ -572,9 +599,90 @@ export const previewBridgeSource = String.raw`
 
   function setTime(time, opts) {
     currentTime = Math.max(0, Math.min(time, duration));
-    seekTimeline(currentTime);
-    updateTimedElements();
+    if (currentTime < duration) {
+      visualTime = currentTime;
+    }
+    seekTimeline(visualTime);
+    updateTimedElements(visualTime);
     if (!opts || !opts.silent) post("timeupdate", { currentTime: currentTime, duration: duration });
+  }
+
+  function waitForInitialAssets(done, failed) {
+    var waits = [];
+    var images = document.images || [];
+    for (var imageIndex = 0; imageIndex < images.length; imageIndex++) {
+      var image = images[imageIndex];
+      if (!image.getAttribute("src") && !image.getAttribute("srcset")) continue;
+      image.loading = "eager";
+      if (image.complete && image.naturalWidth > 0) continue;
+      if (typeof image.decode === "function") {
+        waits.push(image.decode());
+      } else {
+        waits.push(new Promise(function (resolve, reject) {
+          image.addEventListener("load", resolve, { once: true });
+          image.addEventListener("error", reject, { once: true });
+        }));
+      }
+    }
+    if (document.fonts && document.fonts.ready) {
+      waits.push(Promise.resolve(document.fonts.ready).catch(function () {}));
+    }
+    if (!waits.length) {
+      done();
+      return;
+    }
+    var timeout = setTimeout(function () {
+      failed("AI Motion assets are still loading. Check the image sources or network connection.");
+    }, 8000);
+    Promise.all(waits).then(function () {
+      clearTimeout(timeout);
+      done();
+    }, function () {
+      clearTimeout(timeout);
+      failed("An AI Motion image could not be decoded. Replace or reload the image.");
+    });
+  }
+
+  function announceFramePresented(requestId) {
+    if (!requestId) return;
+	  pendingPresentationRequestId = requestId;
+	  if (presentationScheduled) return;
+	  presentationScheduled = true;
+    var afterAssets = function () {
+      requestAnimationFrame(function () {
+        requestAnimationFrame(function () {
+		  presentationScheduled = false;
+		  var presentedRequestId = pendingPresentationRequestId;
+		  pendingPresentationRequestId = null;
+		  if (!presentedRequestId) return;
+          hasPresentedFrame = true;
+          post("frame-presented", {
+			requestId: presentedRequestId,
+            currentTime: currentTime,
+            duration: duration
+          });
+        });
+      });
+    };
+    if (hasPresentedFrame) afterAssets();
+    else waitForInitialAssets(afterAssets, function (message) {
+      presentationScheduled = false;
+      post("error", { message: message });
+    });
+  }
+
+  function applyHostSeek(time, requestId) {
+    if (!ready) {
+      pendingSeek = { time: time, requestId: requestId };
+      if (findComposition()) finishInitialization();
+      return;
+    }
+    try {
+      setTime(time);
+      announceFramePresented(requestId);
+    } catch (error) {
+      post("error", { message: "AI Motion seek failed: " + (error && error.message ? error.message : String(error)) });
+    }
   }
 
   function serializeSnapshot() {
@@ -612,7 +720,7 @@ export const previewBridgeSource = String.raw`
 
   function tick(now) {
     if (!ready) return;
-    if (playing) {
+    if (playing && PLAYBACK_MODE === "internal") {
       var delta = (now - lastTick) / 1000;
       lastTick = now;
       setTime(currentTime + delta * playbackRate, { silent: true });
@@ -633,21 +741,21 @@ export const previewBridgeSource = String.raw`
     if (applyEditorAction(data)) {
       return;
     } else if (data.action === "play") {
-      playing = true;
+      playing = PLAYBACK_MODE === "internal";
       lastTick = performance.now();
       announceState();
     } else if (data.action === "pause") {
       playing = false;
       announceState();
     } else if (data.action === "toggle") {
-      playing = !playing;
+      playing = PLAYBACK_MODE === "internal" ? !playing : false;
       lastTick = performance.now();
       announceState();
     } else if (data.action === "seek") {
       var t = typeof data.timeSeconds === "number"
         ? data.timeSeconds
         : (typeof data.frame === "number" ? data.frame / (data.fps || 30) : currentTime);
-      setTime(t);
+      applyHostSeek(t, data.requestId);
     } else if (data.action === "snapshot") {
       var snapshotTime = typeof data.timeSeconds === "number"
         ? data.timeSeconds
@@ -679,19 +787,37 @@ export const previewBridgeSource = String.raw`
   window.addEventListener("resize", updateSelectionOverlay);
   window.addEventListener("scroll", updateSelectionOverlay, true);
 
+  function finishInitialization() {
+    if (ready) return;
+    ready = true;
+    var initialSeek = pendingSeek;
+    pendingSeek = null;
+    try {
+      if (initialSeek) setTime(initialSeek.time, { silent: true });
+      else setTime(0, { silent: true });
+    } catch (error) {
+      post("error", { message: "AI Motion initialization failed: " + (error && error.message ? error.message : String(error)) });
+      return;
+    }
+    ensureSelectionOverlay();
+    post("ready", { duration: duration, currentTime: currentTime, compositionId: compositionId });
+    if (initialSeek) announceFramePresented(initialSeek.requestId);
+    monitorSelectedImages();
+	  scanRuntimeMotion();
+    requestAnimationFrame(tick);
+  }
+
   var tries = 0;
+  if (findComposition()) {
+    finishInitialization();
+    return;
+  }
   var poller = setInterval(function () {
+    if (ready) { clearInterval(poller); return; }
     tries += 1;
     if (findComposition()) {
       clearInterval(poller);
-      ready = true;
-      seekTimeline(0);
-      updateTimedElements();
-      ensureSelectionOverlay();
-      post("ready", { duration: duration, currentTime: 0, compositionId: compositionId });
-      monitorSelectedImages();
-	  scanRuntimeMotion();
-      requestAnimationFrame(tick);
+      finishInitialization();
     } else if (tries >= MAX_TRIES) {
       clearInterval(poller);
       post("error", { message: "No seekable window.__timelines composition was found." });

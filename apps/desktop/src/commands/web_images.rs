@@ -7,9 +7,13 @@ use reqwest::blocking::{Client, Response};
 use reqwest::redirect::Policy;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use std::collections::{HashMap, VecDeque};
 use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{
+    Mutex, OnceLock,
+    atomic::{AtomicU64, Ordering},
+};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tauri::AppHandle;
 
@@ -18,8 +22,108 @@ const MAX_SEARCH_RESULTS: usize = 12;
 const MAX_IMAGE_BYTES: usize = 12 * 1024 * 1024;
 const MIN_IMAGE_WIDTH: u32 = 800;
 const MAX_IMAGE_PIXELS: u64 = 100_000_000;
+const MAX_PREVIEW_MEDIA_CACHE_BYTES: usize = 32 * 1024 * 1024;
 const SELECTED_IMAGE_PLACEHOLDER_PREFIX: &str = "opencut-selected-image://";
 static SEARCH_COUNTER: AtomicU64 = AtomicU64::new(0);
+static PREVIEW_MEDIA_CACHE: OnceLock<Mutex<PreviewMediaCache>> = OnceLock::new();
+
+struct PreviewMediaCacheEntry {
+    modified: Option<SystemTime>,
+    file_len: u64,
+    data_url: String,
+}
+
+#[derive(Default)]
+struct PreviewMediaCache {
+    entries: HashMap<PathBuf, PreviewMediaCacheEntry>,
+    order: VecDeque<PathBuf>,
+    total_bytes: usize,
+}
+
+impl PreviewMediaCache {
+    fn get(&mut self, path: &Path, file_len: u64, modified: Option<SystemTime>) -> Option<String> {
+        let matches = self
+            .entries
+            .get(path)
+            .is_some_and(|entry| entry.file_len == file_len && entry.modified == modified);
+        if !matches {
+            if let Some(stale) = self.entries.remove(path) {
+                self.total_bytes = self.total_bytes.saturating_sub(stale.data_url.len());
+                self.order.retain(|candidate| candidate != path);
+            }
+            return None;
+        }
+        let data_url = self.entries.get(path)?.data_url.clone();
+        self.order.retain(|candidate| candidate != path);
+        self.order.push_back(path.to_path_buf());
+        Some(data_url)
+    }
+
+    fn insert(
+        &mut self,
+        path: PathBuf,
+        file_len: u64,
+        modified: Option<SystemTime>,
+        data_url: String,
+    ) {
+        if data_url.len() > MAX_PREVIEW_MEDIA_CACHE_BYTES {
+            return;
+        }
+        if let Some(previous) = self.entries.remove(&path) {
+            self.total_bytes = self.total_bytes.saturating_sub(previous.data_url.len());
+        }
+        self.order.retain(|candidate| candidate != &path);
+        self.total_bytes += data_url.len();
+        self.order.push_back(path.clone());
+        self.entries.insert(
+            path,
+            PreviewMediaCacheEntry {
+                modified,
+                file_len,
+                data_url,
+            },
+        );
+        while self.total_bytes > MAX_PREVIEW_MEDIA_CACHE_BYTES {
+            let Some(oldest) = self.order.pop_front() else {
+                break;
+            };
+            if let Some(removed) = self.entries.remove(&oldest) {
+                self.total_bytes = self.total_bytes.saturating_sub(removed.data_url.len());
+            }
+        }
+    }
+}
+
+fn preview_media_data_url(path: &Path) -> Result<String, String> {
+    let metadata = std::fs::metadata(path)
+        .map_err(|error| format!("could not inspect local image: {error}"))?;
+    let file_len = metadata.len();
+    let modified = metadata.modified().ok();
+    let cache = PREVIEW_MEDIA_CACHE.get_or_init(|| Mutex::new(PreviewMediaCache::default()));
+    if let Some(data_url) = cache
+        .lock()
+        .map_err(|_| "local image preview cache is unavailable".to_string())?
+        .get(path, file_len, modified)
+    {
+        return Ok(data_url);
+    }
+
+    let bytes =
+        std::fs::read(path).map_err(|error| format!("could not read local image: {error}"))?;
+    if bytes.len() > MAX_IMAGE_BYTES {
+        return Err("local image exceeds the preview size limit".to_string());
+    }
+    let (mime, _, _, _) = sniff_image(&bytes)?;
+    let data_url = format!(
+        "data:{mime};base64,{}",
+        base64::engine::general_purpose::STANDARD.encode(bytes)
+    );
+    cache
+        .lock()
+        .map_err(|_| "local image preview cache is unavailable".to_string())?
+        .insert(path.to_path_buf(), file_len, modified, data_url.clone());
+    Ok(data_url)
+}
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -754,6 +858,7 @@ fn resolve_media_inner(app: AppHandle, request: ResolveMediaRequest) -> Result<S
         .unwrap_or_else(|_| root.join(".media").join("images"));
     let prefix = "opencut-media://local/";
     let mut html = request.html;
+    let mut resolved_in_request = HashMap::<PathBuf, String>::new();
     let mut cursor = 0usize;
     while let Some(relative) = html[cursor..].find(prefix) {
         let start = cursor + relative;
@@ -779,16 +884,13 @@ fn resolve_media_inner(app: AppHandle, request: ResolveMediaRequest) -> Result<S
                 "composition media reference is outside its local image directory".to_string(),
             );
         }
-        let bytes = std::fs::read(&canonical)
-            .map_err(|error| format!("could not read local image: {error}"))?;
-        if bytes.len() > MAX_IMAGE_BYTES {
-            return Err("local image exceeds the preview size limit".to_string());
-        }
-        let (mime, _, _, _) = sniff_image(&bytes)?;
-        let data_url = format!(
-            "data:{mime};base64,{}",
-            base64::engine::general_purpose::STANDARD.encode(bytes)
-        );
+        let data_url = if let Some(resolved) = resolved_in_request.get(&canonical) {
+            resolved.clone()
+        } else {
+            let resolved = preview_media_data_url(&canonical)?;
+            resolved_in_request.insert(canonical, resolved.clone());
+            resolved
+        };
         html.replace_range(start..end, &data_url);
         cursor = start + data_url.len();
     }
@@ -847,5 +949,26 @@ mod tests {
         assert_eq!(decode_image_data_url(&missing_mime).unwrap(), bytes);
         assert!(decode_image_data_url("data:text/plain;base64,SGVsbG8=").is_err());
         assert!(decode_image_data_url("data:application/octet-stream;base64,SGVsbG8=").is_err());
+    }
+
+    #[test]
+    fn preview_media_cache_reuses_and_invalidates_file_versions() {
+        let mut cache = PreviewMediaCache::default();
+        let path = PathBuf::from("cached-preview.png");
+        let modified = Some(UNIX_EPOCH + Duration::from_secs(10));
+        cache.insert(
+            path.clone(),
+            12,
+            modified,
+            "data:image/png;base64,abc".to_string(),
+        );
+
+        assert_eq!(
+            cache.get(&path, 12, modified).as_deref(),
+            Some("data:image/png;base64,abc")
+        );
+        assert_eq!(cache.get(&path, 13, modified), None);
+        assert!(cache.entries.is_empty());
+        assert_eq!(cache.total_bytes, 0);
     }
 }

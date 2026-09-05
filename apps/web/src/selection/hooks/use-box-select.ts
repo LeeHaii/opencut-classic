@@ -43,6 +43,7 @@ export function useBoxSelect<TId>({
 	resolveIntersections,
 	selectedIds,
 	anchorId,
+	getSelectionSnapshot,
 	onSelectionChange,
 	shouldStartSelection,
 	getIsAdditiveSelection,
@@ -52,6 +53,10 @@ export function useBoxSelect<TId>({
 	resolveIntersections: ResolveIntersections<TId>;
 	selectedIds: TId[];
 	anchorId: TId | null;
+	getSelectionSnapshot?: () => {
+		selectedIds: TId[];
+		anchorId: TId | null;
+	};
 	onSelectionChange: (state: {
 		intersectedIds: TId[];
 		initialSelectedIds: TId[];
@@ -77,6 +82,10 @@ export function useBoxSelect<TId>({
 
 			const startPos = { x: event.clientX, y: event.clientY };
 			const container = containerRef.current;
+			const selectionSnapshot = getSelectionSnapshot?.() ?? {
+				selectedIds,
+				anchorId,
+			};
 			setSelectionBox({
 				startPos,
 				currentPos: startPos,
@@ -91,14 +100,15 @@ export function useBoxSelect<TId>({
 				isAdditive: getIsAdditiveSelection
 					? getIsAdditiveSelection(event)
 					: event.ctrlKey || event.metaKey,
-				initialSelectedIds: selectedIds,
-				initialAnchorId: anchorId,
+				initialSelectedIds: selectionSnapshot.selectedIds,
+				initialAnchorId: selectionSnapshot.anchorId,
 			});
 		},
 		[
 			anchorId,
 			containerRef,
 			getIsAdditiveSelection,
+			getSelectionSnapshot,
 			isEnabled,
 			selectedIds,
 			shouldStartSelection,
