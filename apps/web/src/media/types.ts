@@ -2,6 +2,16 @@ import type { MediaAssetData } from "@/services/storage/types";
 
 export type MediaType = "image" | "video" | "audio";
 
+export const ROOT_MEDIA_FOLDER_ID = "__root__";
+
+export interface MediaFolder {
+	id: string;
+	parentId: string;
+	name: string;
+	createdAt: number;
+	updatedAt: number;
+}
+
 export interface MediaAsset extends Omit<
 	MediaAssetData,
 	"size" | "lastModified"

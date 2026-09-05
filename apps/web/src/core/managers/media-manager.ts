@@ -1,6 +1,10 @@
 import type { EditorCore } from "@/core";
 import { toast } from "sonner";
-import type { MediaAsset } from "@/media/types";
+import {
+	ROOT_MEDIA_FOLDER_ID,
+	type MediaAsset,
+	type MediaFolder,
+} from "@/media/types";
 import { storageService } from "@/services/storage/service";
 import { generateUUID } from "@/utils/id";
 import { videoCache } from "@/services/video-cache/service";
@@ -9,6 +13,12 @@ import { BatchCommand, RemoveMediaAssetCommand } from "@/commands";
 
 export class MediaManager {
 	private assets: MediaAsset[] = [];
+	private folders: MediaFolder[] = [];
+	private assetsById = new Map<string, MediaAsset>();
+	private assetIdsByFolder = new Map<string, string[]>();
+	private foldersById = new Map<string, MediaFolder>();
+	private folderIdsByParent = new Map<string, string[]>();
+	private catalogWrites = new Map<string, Promise<void>>();
 	private isLoading = false;
 	private listeners = new Set<() => void>();
 
@@ -63,9 +73,7 @@ export class MediaManager {
 		} catch (error) {
 			console.error("Failed to save downloaded media asset:", error);
 			this.assets = this.assets.map((item) =>
-				item.id === id
-					? { ...pendingAsset, downloadStatus: "failed" }
-					: item,
+				item.id === id ? { ...pendingAsset, downloadStatus: "failed" } : item,
 			);
 			this.notify();
 
@@ -162,10 +170,12 @@ export class MediaManager {
 		this.notify();
 
 		try {
-			const mediaAssets = await storageService.loadAllMediaAssets({
-				projectId,
-			});
+			const [mediaAssets, folders] = await Promise.all([
+				storageService.loadAllMediaAssets({ projectId }),
+				storageService.loadMediaFolders({ projectId }),
+			]);
 			this.assets = mediaAssets;
+			this.folders = folders;
 			this.notify();
 		} catch (error) {
 			console.error("Failed to load media assets:", error);
@@ -235,15 +245,21 @@ export class MediaManager {
 		});
 
 		const mediaIds = this.assets.map((asset) => asset.id);
+		const folderIds = this.folders.map((folder) => folder.id);
 		this.assets = [];
+		this.folders = [];
 		this.notify();
 
 		try {
-			await Promise.all(
-				mediaIds.map((id) =>
+			await Promise.all([
+				...mediaIds.map((id) =>
 					storageService.deleteMediaAsset({ projectId, id }),
 				),
-			);
+				storageService.deleteMediaFolders({
+					projectId,
+					folderIds,
+				}),
+			]);
 		} catch (error) {
 			console.error("Failed to clear media assets from storage:", error);
 		}
@@ -263,11 +279,246 @@ export class MediaManager {
 		});
 
 		this.assets = [];
+		this.folders = [];
 		this.notify();
 	}
 
 	getAssets(): MediaAsset[] {
 		return this.assets;
+	}
+
+	getAsset({ id }: { id: string }): MediaAsset | null {
+		return this.assetsById.get(id) ?? null;
+	}
+
+	getFolders(): MediaFolder[] {
+		return this.folders;
+	}
+
+	getFolder({ id }: { id: string }): MediaFolder | null {
+		return this.foldersById.get(id) ?? null;
+	}
+
+	getAssetsInFolder({ folderId }: { folderId: string }): MediaAsset[] {
+		return (this.assetIdsByFolder.get(folderId) ?? [])
+			.map((id) => this.assetsById.get(id))
+			.filter((asset): asset is MediaAsset => asset != null);
+	}
+
+	getChildFolders({ parentId }: { parentId: string }): MediaFolder[] {
+		return (this.folderIdsByParent.get(parentId) ?? [])
+			.map((id) => this.foldersById.get(id))
+			.filter((folder): folder is MediaFolder => folder != null);
+	}
+
+	createFolder({
+		projectId,
+		parentId,
+		name,
+	}: {
+		projectId: string;
+		parentId: string;
+		name: string;
+	}): MediaFolder {
+		const now = Date.now();
+		const folder: MediaFolder = {
+			id: generateUUID(),
+			parentId,
+			name: name.trim(),
+			createdAt: now,
+			updatedAt: now,
+		};
+		this.addFolder({ projectId, folder });
+		return folder;
+	}
+
+	addFolder({
+		projectId,
+		folder,
+	}: {
+		projectId: string;
+		folder: MediaFolder;
+	}): void {
+		if (
+			this.foldersById.has(folder.id) ||
+			(folder.parentId !== ROOT_MEDIA_FOLDER_ID &&
+				!this.foldersById.has(folder.parentId))
+		) {
+			return;
+		}
+		this.folders = [...this.folders, folder];
+		this.notify();
+		this.enqueueCatalogWrite({
+			projectId,
+			write: () =>
+				storageService.saveMediaFolders({ projectId, folders: [folder] }),
+			onError: (error) => {
+				this.folders = this.folders.filter((item) => item.id !== folder.id);
+				this.notify();
+				toast.error("Could not create media folder", {
+					description: error instanceof Error ? error.message : String(error),
+				});
+			},
+		});
+	}
+
+	renameFolder({
+		projectId,
+		folderId,
+		name,
+	}: {
+		projectId: string;
+		folderId: string;
+		name: string;
+	}): void {
+		const previous = this.folders.find((folder) => folder.id === folderId);
+		if (!previous) return;
+		const updated = { ...previous, name: name.trim(), updatedAt: Date.now() };
+		this.folders = this.folders.map((folder) =>
+			folder.id === folderId ? updated : folder,
+		);
+		this.notify();
+		this.enqueueCatalogWrite({
+			projectId,
+			write: () =>
+				storageService.saveMediaFolders({ projectId, folders: [updated] }),
+			onError: (error) => {
+				this.folders = this.folders.map((folder) =>
+					folder.id === folderId && folder.name === updated.name
+						? previous
+						: folder,
+				);
+				this.notify();
+				toast.error("Could not rename media folder", {
+					description: error instanceof Error ? error.message : String(error),
+				});
+			},
+		});
+	}
+
+	deleteFolder({
+		projectId,
+		folderId,
+	}: {
+		projectId: string;
+		folderId: string;
+	}): boolean {
+		if (
+			this.folders.some((folder) => folder.parentId === folderId) ||
+			this.assets.some(
+				(asset) => (asset.folderId ?? ROOT_MEDIA_FOLDER_ID) === folderId,
+			)
+		) {
+			return false;
+		}
+		const removed = this.foldersById.get(folderId);
+		this.folders = this.folders.filter((folder) => folder.id !== folderId);
+		this.notify();
+		this.enqueueCatalogWrite({
+			projectId,
+			write: () =>
+				storageService.deleteMediaFolders({ projectId, folderIds: [folderId] }),
+			onError: (error) => {
+				if (removed && !this.foldersById.has(removed.id)) {
+					this.folders = [...this.folders, removed];
+					this.notify();
+				}
+				toast.error("Could not delete media folder", {
+					description: error instanceof Error ? error.message : String(error),
+				});
+			},
+		});
+		return true;
+	}
+
+	moveFolder({
+		projectId,
+		folderId,
+		parentId,
+	}: {
+		projectId: string;
+		folderId: string;
+		parentId: string;
+	}): boolean {
+		const previous = this.foldersById.get(folderId);
+		if (
+			!previous ||
+			folderId === parentId ||
+			previous.parentId === parentId ||
+			(parentId !== ROOT_MEDIA_FOLDER_ID && !this.foldersById.has(parentId))
+		) {
+			return false;
+		}
+		let cursor = parentId;
+		const visited = new Set<string>();
+		while (cursor !== ROOT_MEDIA_FOLDER_ID && !visited.has(cursor)) {
+			if (cursor === folderId) return false;
+			visited.add(cursor);
+			cursor = this.foldersById.get(cursor)?.parentId ?? ROOT_MEDIA_FOLDER_ID;
+		}
+		const updated = { ...previous, parentId, updatedAt: Date.now() };
+		this.folders = this.folders.map((folder) =>
+			folder.id === folderId ? updated : folder,
+		);
+		this.notify();
+		this.enqueueCatalogWrite({
+			projectId,
+			write: () =>
+				storageService.saveMediaFolders({ projectId, folders: [updated] }),
+			onError: (error) => {
+				this.folders = this.folders.map((folder) =>
+					folder.id === folderId && folder.parentId === parentId
+						? previous
+						: folder,
+				);
+				this.notify();
+				toast.error("Could not move media folder", {
+					description: error instanceof Error ? error.message : String(error),
+				});
+			},
+		});
+		return true;
+	}
+
+	moveAssetsToFolder({
+		projectId,
+		assetIds,
+		folderId,
+	}: {
+		projectId: string;
+		assetIds: string[];
+		folderId: string;
+	}): void {
+		if (folderId !== ROOT_MEDIA_FOLDER_ID && !this.foldersById.has(folderId)) {
+			return;
+		}
+		const ids = new Set(assetIds);
+		const changed: MediaAsset[] = [];
+		const previous = new Map<string, MediaAsset>();
+		this.assets = this.assets.map((asset) => {
+			if (!ids.has(asset.id)) return asset;
+			previous.set(asset.id, asset);
+			const updated = { ...asset, folderId };
+			changed.push(updated);
+			return updated;
+		});
+		if (changed.length === 0) return;
+		this.notify();
+		this.enqueueCatalogWrite({
+			projectId,
+			write: () =>
+				storageService.updateMediaAssetFolders({ projectId, assets: changed }),
+			onError: (error) => {
+				this.assets = this.assets.map((asset) => {
+					const original = previous.get(asset.id);
+					return original && asset.folderId === folderId ? original : asset;
+				});
+				this.notify();
+				toast.error("Could not move media", {
+					description: error instanceof Error ? error.message : String(error),
+				});
+			},
+		});
 	}
 
 	setAssets({ assets }: { assets: MediaAsset[] }): void {
@@ -285,8 +536,51 @@ export class MediaManager {
 	}
 
 	private notify(): void {
+		this.rebuildIndexes();
 		this.listeners.forEach((fn) => {
 			fn();
 		});
+	}
+
+	private rebuildIndexes(): void {
+		this.assetsById = new Map();
+		this.assetIdsByFolder = new Map();
+		for (const asset of this.assets) {
+			this.assetsById.set(asset.id, asset);
+			const folderId = asset.folderId ?? ROOT_MEDIA_FOLDER_ID;
+			const bucket = this.assetIdsByFolder.get(folderId) ?? [];
+			bucket.push(asset.id);
+			this.assetIdsByFolder.set(folderId, bucket);
+		}
+		this.foldersById = new Map();
+		this.folderIdsByParent = new Map();
+		for (const folder of this.folders) {
+			this.foldersById.set(folder.id, folder);
+			const bucket = this.folderIdsByParent.get(folder.parentId) ?? [];
+			bucket.push(folder.id);
+			this.folderIdsByParent.set(folder.parentId, bucket);
+		}
+	}
+
+	private enqueueCatalogWrite({
+		projectId,
+		write,
+		onError,
+	}: {
+		projectId: string;
+		write: () => Promise<void>;
+		onError: (error: unknown) => void;
+	}): void {
+		const previous = this.catalogWrites.get(projectId) ?? Promise.resolve();
+		const next = previous
+			.catch(() => undefined)
+			.then(write)
+			.catch(onError)
+			.finally(() => {
+				if (this.catalogWrites.get(projectId) === next) {
+					this.catalogWrites.delete(projectId);
+				}
+			});
+		this.catalogWrites.set(projectId, next);
 	}
 }

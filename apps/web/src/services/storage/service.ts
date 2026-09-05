@@ -12,6 +12,7 @@ import {
 } from "./quota";
 import type {
 	MediaAssetData,
+	MediaFolderData,
 	StorageConfig,
 	SerializedProject,
 	SerializedScene,
@@ -24,6 +25,12 @@ import {
 import type { Bookmark, SceneTracks, TScene } from "@/timeline";
 import { roundMediaTime } from "@/wasm";
 
+interface ProjectMediaAdapters {
+	mediaMetadataAdapter: IndexedDBAdapter<MediaAssetData>;
+	mediaAssetsAdapter: OPFSAdapter;
+	mediaFoldersAdapter: IndexedDBAdapter<MediaFolderData>;
+}
+
 function normalizeBookmarks({ raw }: { raw: unknown }): Bookmark[] {
 	if (!Array.isArray(raw)) return [];
 	return raw
@@ -31,24 +38,36 @@ function normalizeBookmarks({ raw }: { raw: unknown }): Bookmark[] {
 			if (typeof item === "number") {
 				return { time: roundMediaTime({ time: item }) };
 			}
-			const obj = item as Record<string, unknown>;
 			if (
-				typeof obj !== "object" ||
-				obj === null ||
-				typeof obj.time !== "number"
+				typeof item !== "object" ||
+				item === null ||
+				!("time" in item) ||
+				typeof item.time !== "number"
 			) {
 				return null;
 			}
 			return {
-				time: roundMediaTime({ time: obj.time }),
-				...(typeof obj.note === "string" && { note: obj.note }),
-				...(typeof obj.color === "string" && { color: obj.color }),
-				...(typeof obj.duration === "number" && {
-					duration: roundMediaTime({ time: obj.duration }),
-				}),
+				time: roundMediaTime({ time: item.time }),
+				...("note" in item &&
+					typeof item.note === "string" && { note: item.note }),
+				...("color" in item &&
+					typeof item.color === "string" && { color: item.color }),
+				...("duration" in item &&
+					typeof item.duration === "number" && {
+						duration: roundMediaTime({ time: item.duration }),
+					}),
 			};
 		})
 		.filter((b): b is Bookmark => b !== null);
+}
+
+function deserializeScene(scene: SerializedScene): TScene {
+	return {
+		...scene,
+		bookmarks: normalizeBookmarks({ raw: scene.bookmarks }),
+		createdAt: new Date(scene.createdAt),
+		updatedAt: new Date(scene.updatedAt),
+	};
 }
 
 class StorageService {
@@ -56,6 +75,7 @@ class StorageService {
 	private savedSoundsAdapter: IndexedDBAdapter<SavedSoundsData>;
 	private config: StorageConfig;
 	private migrationsPromise: Promise<void> | null = null;
+	private projectMediaAdapters = new Map<string, ProjectMediaAdapters>();
 
 	constructor() {
 		this.config = {
@@ -90,7 +110,13 @@ class StorageService {
 		await this.migrationsPromise;
 	}
 
-	private getProjectMediaAdapters({ projectId }: { projectId: string }) {
+	private getProjectMediaAdapters({
+		projectId,
+	}: {
+		projectId: string;
+	}): ProjectMediaAdapters {
+		const cached = this.projectMediaAdapters.get(projectId);
+		if (cached) return cached;
 		const mediaMetadataAdapter = new IndexedDBAdapter<MediaAssetData>({
 			dbName: `${this.config.mediaDb}-${projectId}`,
 			storeName: "media-metadata",
@@ -98,8 +124,38 @@ class StorageService {
 		});
 
 		const mediaAssetsAdapter = new OPFSAdapter(`media-files-${projectId}`);
+		const mediaFoldersAdapter = new IndexedDBAdapter<MediaFolderData>({
+			dbName: `${this.config.mediaDb}-folders-${projectId}`,
+			storeName: "media-folders",
+			version: 1,
+		});
 
-		return { mediaMetadataAdapter, mediaAssetsAdapter };
+		const adapters = {
+			mediaMetadataAdapter,
+			mediaAssetsAdapter,
+			mediaFoldersAdapter,
+		};
+		this.projectMediaAdapters.set(projectId, adapters);
+		return adapters;
+	}
+
+	private mediaMetadata(mediaAsset: MediaAsset): MediaAssetData {
+		return {
+			id: mediaAsset.id,
+			name: mediaAsset.name,
+			type: mediaAsset.type,
+			size: mediaAsset.file?.size ?? 0,
+			lastModified: mediaAsset.file?.lastModified ?? Date.now(),
+			width: mediaAsset.width,
+			height: mediaAsset.height,
+			duration: mediaAsset.duration,
+			fps: mediaAsset.fps,
+			hasAudio: mediaAsset.hasAudio,
+			thumbnailUrl: mediaAsset.thumbnailUrl,
+			ephemeral: mediaAsset.ephemeral,
+			remoteUrl: mediaAsset.remoteUrl,
+			folderId: mediaAsset.folderId,
+		};
 	}
 
 	async canStoreFile({
@@ -190,16 +246,7 @@ class StorageService {
 			return null;
 		}
 
-		const scenes =
-			serializedProject.scenes?.map((scene) => ({
-				id: scene.id,
-				name: scene.name,
-				isMain: scene.isMain,
-				tracks: scene.tracks,
-				bookmarks: normalizeBookmarks({ raw: scene.bookmarks }),
-				createdAt: new Date(scene.createdAt),
-				updatedAt: new Date(scene.updatedAt),
-			})) ?? [];
+		const scenes = serializedProject.scenes?.map(deserializeScene) ?? [];
 
 		const project: TProject = {
 			metadata: {
@@ -267,7 +314,7 @@ class StorageService {
 					time:
 						serializedProject.metadata.duration ??
 						getProjectDurationFromScenes({
-							scenes: (serializedProject.scenes ?? []) as unknown as TScene[],
+							scenes: (serializedProject.scenes ?? []).map(deserializeScene),
 						}),
 				}),
 				createdAt: new Date(serializedProject.metadata.createdAt),
@@ -294,21 +341,7 @@ class StorageService {
 		const { mediaMetadataAdapter, mediaAssetsAdapter } =
 			this.getProjectMediaAdapters({ projectId });
 
-		const metadata: MediaAssetData = {
-			id: mediaAsset.id,
-			name: mediaAsset.name,
-			type: mediaAsset.type,
-			size: mediaAsset.file?.size ?? 0,
-			lastModified: mediaAsset.file?.lastModified ?? Date.now(),
-			width: mediaAsset.width,
-			height: mediaAsset.height,
-			duration: mediaAsset.duration,
-			fps: mediaAsset.fps,
-			hasAudio: mediaAsset.hasAudio,
-			thumbnailUrl: mediaAsset.thumbnailUrl,
-			ephemeral: mediaAsset.ephemeral,
-			remoteUrl: mediaAsset.remoteUrl,
-		};
+		const metadata = this.mediaMetadata(mediaAsset);
 
 		try {
 			// Remote (streamed) assets have no local bytes to persist yet.
@@ -355,6 +388,16 @@ class StorageService {
 		]);
 
 		if (!metadata) return null;
+		return this.materializeMediaAsset({ metadata, file });
+	}
+
+	private async materializeMediaAsset({
+		metadata,
+		file,
+	}: {
+		metadata: MediaAssetData;
+		file: File | null;
+	}): Promise<MediaAsset | null> {
 		if (!file) {
 			// Remote (streamed) asset: no local bytes stored.
 			if (!metadata.remoteUrl) return null;
@@ -370,6 +413,7 @@ class StorageService {
 				thumbnailUrl: metadata.thumbnailUrl,
 				ephemeral: metadata.ephemeral,
 				remoteUrl: metadata.remoteUrl,
+				folderId: metadata.folderId,
 			};
 		}
 
@@ -404,7 +448,59 @@ class StorageService {
 			thumbnailUrl: metadata.thumbnailUrl,
 			ephemeral: metadata.ephemeral,
 			remoteUrl: metadata.remoteUrl,
+			folderId: metadata.folderId,
 		};
+	}
+
+	async saveMediaFolders({
+		projectId,
+		folders,
+	}: {
+		projectId: string;
+		folders: MediaFolderData[];
+	}): Promise<void> {
+		const { mediaFoldersAdapter } = this.getProjectMediaAdapters({ projectId });
+		await mediaFoldersAdapter.setMany(
+			folders.map((folder) => ({ key: folder.id, value: folder })),
+		);
+	}
+
+	async loadMediaFolders({
+		projectId,
+	}: {
+		projectId: string;
+	}): Promise<MediaFolderData[]> {
+		const { mediaFoldersAdapter } = this.getProjectMediaAdapters({ projectId });
+		return mediaFoldersAdapter.getAll();
+	}
+
+	async deleteMediaFolders({
+		projectId,
+		folderIds,
+	}: {
+		projectId: string;
+		folderIds: string[];
+	}): Promise<void> {
+		const { mediaFoldersAdapter } = this.getProjectMediaAdapters({ projectId });
+		await Promise.all(folderIds.map((id) => mediaFoldersAdapter.remove(id)));
+	}
+
+	async updateMediaAssetFolders({
+		projectId,
+		assets,
+	}: {
+		projectId: string;
+		assets: MediaAsset[];
+	}): Promise<void> {
+		const { mediaMetadataAdapter } = this.getProjectMediaAdapters({
+			projectId,
+		});
+		await mediaMetadataAdapter.setMany(
+			assets.map((asset) => ({
+				key: asset.id,
+				value: this.mediaMetadata(asset),
+			})),
+		);
 	}
 
 	async loadAllMediaAssets({
@@ -412,21 +508,34 @@ class StorageService {
 	}: {
 		projectId: string;
 	}): Promise<MediaAsset[]> {
-		const { mediaMetadataAdapter } = this.getProjectMediaAdapters({
-			projectId,
-		});
+		const { mediaMetadataAdapter, mediaAssetsAdapter } =
+			this.getProjectMediaAdapters({
+				projectId,
+			});
+		const metadataItems = await mediaMetadataAdapter.getAll();
+		const mediaItems: Array<MediaAsset | null> = Array.from(
+			{
+				length: metadataItems.length,
+			},
+			() => null,
+		);
+		let cursor = 0;
+		const workerCount = Math.min(8, metadataItems.length);
+		await Promise.all(
+			Array.from({ length: workerCount }, async () => {
+				while (cursor < metadataItems.length) {
+					const index = cursor++;
+					const metadata = metadataItems[index];
+					const file = await mediaAssetsAdapter.get(metadata.id);
+					mediaItems[index] = await this.materializeMediaAsset({
+						metadata,
+						file,
+					});
+				}
+			}),
+		);
 
-		const mediaIds = await mediaMetadataAdapter.list();
-		const mediaItems: MediaAsset[] = [];
-
-		for (const id of mediaIds) {
-			const item = await this.loadMediaAsset({ projectId, id });
-			if (item) {
-				mediaItems.push(item);
-			}
-		}
-
-		return mediaItems;
+		return mediaItems.filter((item): item is MediaAsset => item != null);
 	}
 
 	async deleteMediaAsset({
@@ -450,12 +559,13 @@ class StorageService {
 	}: {
 		projectId: string;
 	}): Promise<void> {
-		const { mediaMetadataAdapter, mediaAssetsAdapter } =
+		const { mediaMetadataAdapter, mediaAssetsAdapter, mediaFoldersAdapter } =
 			this.getProjectMediaAdapters({ projectId });
 
 		await Promise.all([
 			mediaMetadataAdapter.clear(),
 			mediaAssetsAdapter.clear(),
+			mediaFoldersAdapter.clear(),
 		]);
 	}
 

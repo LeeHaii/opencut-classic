@@ -29,6 +29,16 @@ export interface MediaAssetData {
 	thumbnailUrl?: string;
 	/** Remote source URL for streamed (not-yet-downloaded) assets. */
 	remoteUrl?: string;
+	/** Virtual catalog location. Missing legacy values are treated as root. */
+	folderId?: string;
+}
+
+export interface MediaFolderData {
+	id: string;
+	parentId: string;
+	name: string;
+	createdAt: number;
+	updatedAt: number;
 }
 
 export type SerializedScene = Omit<TScene, "createdAt" | "updatedAt"> & {

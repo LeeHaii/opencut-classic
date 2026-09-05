@@ -119,6 +119,8 @@ interface AssetsPanelStore {
 	mediaSortBy: MediaSortKey;
 	mediaSortOrder: MediaSortOrder;
 	setMediaSort: (args: { key: MediaSortKey; order: MediaSortOrder }) => void;
+	currentMediaFolderId: string;
+	setCurrentMediaFolderId: (folderId: string) => void;
 }
 
 export const useAssetsPanelStore = create<AssetsPanelStore>()(
@@ -136,6 +138,9 @@ export const useAssetsPanelStore = create<AssetsPanelStore>()(
 			mediaSortOrder: "asc",
 			setMediaSort: ({ key, order }) =>
 				set({ mediaSortBy: key, mediaSortOrder: order }),
+			currentMediaFolderId: "__root__",
+			setCurrentMediaFolderId: (currentMediaFolderId) =>
+				set({ currentMediaFolderId }),
 		}),
 		{
 			name: "assets-panel",
