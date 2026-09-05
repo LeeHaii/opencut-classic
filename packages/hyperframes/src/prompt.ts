@@ -15,6 +15,7 @@ export interface PromptContext {
 	referenceImages?: string[];
 	/** An image selected for composition use and frozen by the desktop host. */
 	selectedImage?: {
+		id: string;
 		name: string;
 		placeholder: string;
 		sourcePageUrl: string;
@@ -68,10 +69,11 @@ export function buildAgentPrompt(context: PromptContext): string {
 		? `\nSelected and frozen image (use it as actual composition media, not only as style inspiration):
 - name: ${selectedImage.name}
 - exact HTML src: ${selectedImage.placeholder}
+- required marker: data-opencut-selected-image="${selectedImage.id}"
 ${selectedImage.sourcePageUrl ? `- source page: ${selectedImage.sourcePageUrl}\n` : ""}- attribution: ${selectedImage.attribution}
 - license: ${selectedImage.license}
 - dimensions: ${selectedImage.width}x${selectedImage.height}
-Use the exact HTML src above in an <img> element. OpenCut replaces this placeholder with the frozen local file after generation. Never use the remote source URL in HTML.\n`
+Replace the object named by the user with a visible <img> at the same position, size, shape, clipping, and animation. Remove or hide the old visual so it cannot cover the image. Put the exact src and required marker above on that <img>. OpenCut replaces this placeholder with the frozen local file after generation. Never use the remote source URL in HTML.\n`
 		: "";
 	const currentCompositionInstructions = currentComposition?.trim()
 		? `\nExisting composition source (this is the source of truth to edit):
@@ -91,6 +93,7 @@ Hard requirements:
 - Keep a single composition root with id="${compositionId}", data-composition-id="${compositionId}", data-start="0", data-duration="${durationSecs}", data-width="${width}", data-height="${height}".
 - The child root MUST NOT have data-track-index and its data-start must remain exactly zero; the host timeline controls where the whole child starts.
 - Every timed visual uses class="clip", data-start and data-duration in seconds, an integer data-track-index, plus a unique stable id attribute.
+- Give every user-visible text leaf, including nested labels and captions, a unique stable id or data-hf-id so its copy can be edited independently in Scene Studio.
 - MANDATORY ANIMATION CONTRACT: load GSAP (<script src="https://cdn.jsdelivr.net/npm/gsap@3/dist/gsap.min.js"></script>) and register exactly ONE paused timeline as window.__timelines["${compositionId}"]. Drive ALL motion through tweens added to it. A composition without this registered timeline renders as a frozen frame and is invalid.
 - Use literal, stable CSS selector strings in GSAP calls (prefer unique element ids or data-hf-id attributes). Do not build animation targets through variables or string concatenation. Use GSAP percentage keyframes when authoring motion intended for detailed Studio editing; ordinary from/to/fromTo tweens remain supported as two endpoint keys.
 - Never animate with CSS transitions, CSS @keyframes, setTimeout, Date.now, Math.random, autoplaying media or wall-clock timing — CSS-only motion cannot be seeked and will appear static in preview and export.
@@ -100,7 +103,7 @@ Hard requirements:
 - Keep the exact child duration ${durationSecs} seconds. Do not shorten or extend it.
 - Always return the complete resulting HTML document, even when the requested update is small. Never return only an explanation, code fragment, or diff.
 - Preserve any existing local media URL exactly unless the user asks to remove it. Local media uses ${"opencut-media://local/..."} URLs — reference them as-is.
-- When a selected and frozen image is listed below, inspect the attached reference and use its exact placeholder as the HTML img src. Never substitute another URL.
+- When a selected and frozen image is listed below, inspect the attached reference, replace the requested object with it, and use its exact placeholder and required marker on one visible HTML img. Never substitute another URL or leave the previous object covering it.
 - Do not use shell commands, network APIs, cookies, localStorage, sessionStorage, the parent window or desktop APIs. CDN script tags are allowed.
 - Filesystem access is restricted to view_file on the exact reference files listed below. Never use find_by_name/grep_search/run_command and never search outside the workspace.
 - 	Before the html fence, give a concise one-sentence summary of what you made. Do not output a diff.

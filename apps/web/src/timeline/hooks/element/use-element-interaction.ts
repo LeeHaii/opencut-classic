@@ -2,7 +2,6 @@ import { useEffect, useReducer, useState, type RefObject } from "react";
 import { useEditor } from "@/editor/use-editor";
 import { useCommittedRef } from "@/hooks/use-committed-ref";
 import { useShiftKey } from "@/hooks/use-shift-key";
-import { useElementSelection } from "@/timeline/hooks/element/use-element-selection";
 import { registerCanceller } from "@/editor/cancel-interaction";
 import {
 	ElementInteractionController,
@@ -30,7 +29,57 @@ export function useElementInteraction({
 }: UseElementInteractionProps) {
 	const editor = useEditor();
 	const isShiftHeldRef = useShiftKey();
-	const selection = useElementSelection();
+	const getSelectedElements = () => editor.selection.getSelectedElements();
+	const isElementSelected = ({
+		trackId,
+		elementId,
+	}: {
+		trackId: string;
+		elementId: string;
+	}) =>
+		getSelectedElements().some(
+			(element) =>
+				element.trackId === trackId && element.elementId === elementId,
+		);
+	const selectElement = ({
+		trackId,
+		elementId,
+	}: {
+		trackId: string;
+		elementId: string;
+	}) => {
+		editor.selection.setSelectedElements({
+			elements: [{ trackId, elementId }],
+		});
+	};
+	const handleElementClick = ({
+		trackId,
+		elementId,
+		isMultiKey,
+	}: {
+		trackId: string;
+		elementId: string;
+		isMultiKey: boolean;
+	}) => {
+		if (!isMultiKey) {
+			selectElement({ trackId, elementId });
+			return;
+		}
+
+		const selectedElements = getSelectedElements();
+		const isSelected = selectedElements.some(
+			(element) =>
+				element.trackId === trackId && element.elementId === elementId,
+		);
+		editor.selection.setSelectedElements({
+			elements: isSelected
+				? selectedElements.filter(
+						(element) =>
+							element.trackId !== trackId || element.elementId !== elementId,
+					)
+				: [...selectedElements, { trackId, elementId }],
+		});
+	};
 
 	const deps: ElementInteractionDeps = {
 		viewport: {
@@ -47,10 +96,10 @@ export function useElementInteraction({
 			getActiveFps: () => editor.project.getActive()?.settings.fps ?? null,
 		},
 		selection: {
-			getSelected: () => selection.selectedElements,
-			isSelected: selection.isElementSelected,
-			select: selection.selectElement,
-			handleClick: selection.handleElementClick,
+			getSelected: getSelectedElements,
+			isSelected: isElementSelected,
+			select: selectElement,
+			handleClick: handleElementClick,
 			clearKeyframeSelection: () => editor.selection.clearKeyframeSelection(),
 		},
 		playback: {

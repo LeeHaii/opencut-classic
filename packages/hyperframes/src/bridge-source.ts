@@ -8,6 +8,13 @@ export const previewBridgeSource = String.raw`
 (function () {
   var PARENT_SOURCE = "hf-parent";
   var SELF_SOURCE = "opencut-hf-preview";
+  var bridgeScript = document.currentScript;
+  var PREVIEW_TOKEN = bridgeScript
+    ? bridgeScript.getAttribute("data-preview-token") || ""
+    : "";
+  var PLAYBACK_MODE = bridgeScript && bridgeScript.getAttribute("data-playback-mode") === "external"
+    ? "external"
+    : "internal";
   var MAX_TRIES = 80;
   var POLL_MS = 100;
 
@@ -16,14 +23,29 @@ export const previewBridgeSource = String.raw`
   var compositionId = null;
   var duration = 0;
   var currentTime = 0;
+  // A host can reach the clip's exclusive end before it removes the iframe.
+  // Preserve the latest in-range sample so that exact-end control messages do
+  // not hide every timed node for one frame.
+  var visualTime = 0;
   var playing = false;
   var playbackRate = 1;
   var lastTick = 0;
   var ready = false;
+  var pendingSeek = null;
+  var pendingPresentationRequestId = null;
+  var presentationScheduled = false;
+  var hasPresentedFrame = false;
   var editorEnabled = false;
   var selectedElement = null;
   var selectionOverlay = null;
   var selectionLabel = null;
+  var mediaDropOverlay = null;
+  var mediaDropLabel = null;
+  // Generated animated documents register a timeline, sometimes on load.
+  // Static HTML compositions remain supported without requiring GSAP.
+  var expectsTimeline = Array.prototype.some.call(document.scripts, function (script) {
+    return script !== bridgeScript && /__timelines/.test(script.textContent || "");
+  });
 
   function findComposition() {
     root = document.querySelector("[data-composition-id]");
@@ -35,6 +57,7 @@ export const previewBridgeSource = String.raw`
       var keys = Object.keys(window.__timelines);
       if (keys.length === 1) timeline = window.__timelines[keys[0]];
     }
+    if (expectsTimeline && (!timeline || typeof timeline.seek !== "function")) return false;
     var attr = Number.parseFloat(root.getAttribute("data-duration"));
     if (Number.isFinite(attr) && attr > 0) {
       duration = attr;
@@ -58,7 +81,7 @@ export const previewBridgeSource = String.raw`
     }
   }
 
-  function updateTimedElements() {
+  function updateTimedElements(time) {
     var timed = document.querySelectorAll("[data-start]");
     for (var i = 0; i < timed.length; i++) {
       var el = timed[i];
@@ -66,7 +89,7 @@ export const previewBridgeSource = String.raw`
       var dur = Number.parseFloat(el.getAttribute("data-duration")) || 0;
       var end = dur > 0 ? start + dur : Number.POSITIVE_INFINITY;
       var authoredHidden = el.getAttribute("data-hidden");
-      var visible = authoredHidden !== "true" && authoredHidden !== "1" && currentTime >= start - 1e-4 && currentTime < end;
+      var visible = authoredHidden !== "true" && authoredHidden !== "1" && time >= start - 1e-4 && time < end;
       if (visible && el.style.display === "none") {
         el.style.display = "";
       } else if (!visible && el.style.display !== "none") {
@@ -75,7 +98,7 @@ export const previewBridgeSource = String.raw`
       if (visible && el.tagName === "VIDEO") {
         var video = el;
         if (Number.isFinite(video.duration) && video.duration > 0) {
-          var local = currentTime - start;
+          var local = time - start;
           var target = Math.min(local, video.duration - 0.05);
           if (Math.abs(video.currentTime - target) > 0.15 && !video.paused) {
             video.currentTime = Math.max(0, target);
@@ -88,8 +111,47 @@ export const previewBridgeSource = String.raw`
 
   function post(type, extra) {
     try {
-      parent.postMessage(Object.assign({ source: SELF_SOURCE, type: type }, extra || {}), "*");
+      parent.postMessage(Object.assign({
+        source: SELF_SOURCE,
+        type: type,
+        previewToken: PREVIEW_TOKEN
+      }, extra || {}), "*");
     } catch (e) { /* parent unreachable */ }
+  }
+
+  function monitorSelectedImages() {
+    var images = document.querySelectorAll("img[data-opencut-selected-image]");
+    for (var i = 0; i < images.length; i++) {
+      (function (image) {
+        var reported = false;
+        var imageId = image.getAttribute("data-opencut-selected-image") || "selected image";
+        var authoredSource = image.getAttribute("src") || "";
+        if (authoredSource.indexOf("opencut-media://local/") === 0) return;
+        function reportLoaded() {
+          if (reported) return;
+          reported = true;
+          post("selected-image-loaded", {
+            imageId: imageId,
+            width: image.naturalWidth,
+            height: image.naturalHeight
+          });
+        }
+        function reportError() {
+          if (reported) return;
+          reported = true;
+          post("selected-image-error", {
+            imageId: imageId,
+            message: "The selected image could not be loaded in the AI Motion preview."
+          });
+        }
+        image.addEventListener("load", reportLoaded, { once: true });
+        image.addEventListener("error", reportError, { once: true });
+        if (image.complete) {
+          if (image.naturalWidth > 0) reportLoaded();
+          else reportError();
+        }
+      })(images[i]);
+    }
   }
 
   function escapeSelectorValue(value) {
@@ -120,6 +182,77 @@ export const previewBridgeSource = String.raw`
     return parts.join(" > ");
   }
 
+  var TEXT_BEARING_TAGS = {
+    a: 1, button: 1, blockquote: 1, div: 1, em: 1, figcaption: 1,
+    h1: 1, h2: 1, h3: 1, h4: 1, h5: 1, h6: 1,
+    label: 1, li: 1, p: 1, small: 1, span: 1, strong: 1, td: 1, th: 1
+  };
+
+  function isEditableTextLeaf(element) {
+    if (!element || element.nodeType !== 1) return false;
+    if (!TEXT_BEARING_TAGS[element.tagName.toLowerCase()]) return false;
+    if (element.children.length !== 0 || element.isContentEditable) return false;
+    return (element.textContent || "").trim().length > 0;
+  }
+
+  function textFieldInfo(element, index, total, source) {
+    var selector = selectorForElement(element);
+    var id = element.id || null;
+    var hfId = element.getAttribute("data-hf-id");
+    return {
+      key: id || hfId || selector,
+      id: id,
+      hfId: hfId,
+      selector: selector,
+      label: total === 1 ? "Text" : "Text " + (index + 1),
+      tag: element.tagName.toLowerCase(),
+      text: element.textContent || "",
+      source: source
+    };
+  }
+
+  function collectTextFields(element) {
+    if (!element || element.nodeType !== 1) {
+      return { fields: [], disabledReason: null };
+    }
+    var hasText = (element.textContent || "").trim().length > 0;
+    if (!hasText) return { fields: [], disabledReason: null };
+    if (element.hasAttribute("data-composition-id")) {
+      return {
+        fields: [],
+        disabledReason: "Select a text element inside the composition to edit it."
+      };
+    }
+    if (isEditableTextLeaf(element)) {
+      return { fields: [textFieldInfo(element, 0, 1, "self")], disabledReason: null };
+    }
+
+    var matches = element.querySelectorAll(
+      "a,button,blockquote,div,em,figcaption,h1,h2,h3,h4,h5,h6,label,li,p,small,span,strong,td,th"
+    );
+    var leaves = [];
+    for (var i = 0; i < matches.length; i++) {
+      var candidate = matches[i];
+      if (!isEditableTextLeaf(candidate)) continue;
+      var timedAncestor = candidate.closest ? candidate.closest("[data-start]") : null;
+      if (timedAncestor && timedAncestor !== element && element.contains(timedAncestor)) continue;
+      leaves.push(candidate);
+      if (leaves.length >= 50) break;
+    }
+    if (leaves.length > 0) {
+      return {
+        fields: leaves.map(function (leaf, index) {
+          return textFieldInfo(leaf, index, leaves.length, "descendant");
+        }),
+        disabledReason: null
+      };
+    }
+    return {
+      fields: [],
+      disabledReason: "Select a text child in the preview to edit it without flattening this layer."
+    };
+  }
+
   function readComputedStyleSubset(element) {
     var result = {};
     var computed = window.getComputedStyle(element);
@@ -148,7 +281,9 @@ export const previewBridgeSource = String.raw`
   function selectionInfo(element) {
     var selector = selectorForElement(element);
     var rect = element.getBoundingClientRect();
-    var text = (element.textContent || "").trim().replace(/\s+/g, " ");
+    var textContent = element.textContent || "";
+    var labelText = textContent.trim().replace(/\s+/g, " ");
+    var textEditing = collectTextFields(element);
     var id = element.id || null;
     var hfId = element.getAttribute("data-hf-id");
     return {
@@ -156,9 +291,11 @@ export const previewBridgeSource = String.raw`
       id: id,
       hfId: hfId,
       selector: selector,
-      label: element.getAttribute("data-label") || element.getAttribute("aria-label") || id || text.slice(0, 40) || element.tagName.toLowerCase(),
+      label: element.getAttribute("data-label") || element.getAttribute("aria-label") || id || labelText.slice(0, 40) || element.tagName.toLowerCase(),
       tagName: element.tagName.toLowerCase(),
-      textContent: text.slice(0, 500),
+      textContent: textContent,
+      textFields: textEditing.fields,
+      textDisabledReason: textEditing.disabledReason,
       dataAttributes: readDataAttributes(element),
       computedStyles: readComputedStyleSubset(element),
       boundingBox: { x: rect.x, y: rect.y, width: rect.width, height: rect.height }
@@ -315,6 +452,45 @@ export const previewBridgeSource = String.raw`
     if (selectionLabel) selectionLabel.textContent = selectionInfo(selectedElement).label;
   }
 
+  function ensureMediaDropOverlay() {
+    if (mediaDropOverlay || !document.body) return;
+    mediaDropOverlay = document.createElement("div");
+    mediaDropOverlay.setAttribute("data-opencut-studio-media-drop", "1");
+    mediaDropOverlay.style.cssText = "position:fixed;pointer-events:none;border:3px solid #22c55e;background:rgba(34,197,94,.10);box-shadow:0 0 0 1px rgba(2,6,23,.65);z-index:2147483647;display:none";
+    mediaDropLabel = document.createElement("div");
+    mediaDropLabel.style.cssText = "position:absolute;left:-3px;bottom:100%;max-width:260px;padding:4px 7px;background:#16a34a;color:white;font:600 11px/1.2 system-ui,sans-serif;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;border-radius:3px 3px 0 0";
+    mediaDropOverlay.appendChild(mediaDropLabel);
+    document.body.appendChild(mediaDropOverlay);
+  }
+
+  function clearMediaDropTarget() {
+    if (mediaDropOverlay) mediaDropOverlay.style.display = "none";
+  }
+
+  function resolveMediaDropTarget(x, y) {
+    var hit = document.elementFromPoint(Number(x) || 0, Number(y) || 0);
+    if (!hit || hit.nodeType !== 1) return null;
+    if (hit.closest && hit.closest("[data-opencut-studio-selection],[data-opencut-studio-media-drop]")) return null;
+    var svg = hit.closest ? hit.closest("svg") : null;
+    if (svg) return svg;
+    return hit.closest ? hit.closest("img") : null;
+  }
+
+  function showMediaDropTarget(element) {
+    ensureMediaDropOverlay();
+    if (!mediaDropOverlay || !element) {
+      clearMediaDropTarget();
+      return;
+    }
+    var rect = element.getBoundingClientRect();
+    mediaDropOverlay.style.display = "block";
+    mediaDropOverlay.style.left = rect.left + "px";
+    mediaDropOverlay.style.top = rect.top + "px";
+    mediaDropOverlay.style.width = Math.max(0, rect.width) + "px";
+    mediaDropOverlay.style.height = Math.max(0, rect.height) + "px";
+    if (mediaDropLabel) mediaDropLabel.textContent = "Replace " + selectionInfo(element).label;
+  }
+
   function selectEditorElement(element, announce) {
     if (!element || element === document.body || element === document.documentElement) {
       element = root;
@@ -378,23 +554,37 @@ export const previewBridgeSource = String.raw`
       }
       return true;
     }
+    if (data.action === "resolve-media-drop-target") {
+      var dropTarget = resolveMediaDropTarget(data.x, data.y);
+      showMediaDropTarget(dropTarget);
+      post(dropTarget ? "media-drop-target" : "media-drop-target-cleared", {
+        requestId: data.requestId,
+        element: dropTarget ? selectionInfo(dropTarget) : undefined
+      });
+      return true;
+    }
+    if (data.action === "clear-media-drop-target") {
+      clearMediaDropTarget();
+      return true;
+    }
     if (!selectedElement || !selectedElement.isConnected) return false;
+    var actionElement = selectedElement;
     if (data.selector) {
       try {
-        selectedElement = document.querySelector(String(data.selector)) || selectedElement;
+        actionElement = document.querySelector(String(data.selector)) || selectedElement;
       } catch (error) { /* invalid selector */ }
     }
     if (data.action === "patch-style") {
-      selectedElement.style.setProperty(String(data.property || ""), String(data.value || ""));
+      actionElement.style.setProperty(String(data.property || ""), String(data.value || ""));
     } else if (data.action === "patch-attribute") {
       var attr = String(data.property || "");
       if (attr.indexOf("data-") !== 0) attr = "data-" + attr;
-      if (data.value === null) selectedElement.removeAttribute(attr);
-      else selectedElement.setAttribute(attr, String(data.value));
-	  duration = readDuration();
-	  updateTimedElements();
+      if (data.value === null) actionElement.removeAttribute(attr);
+      else actionElement.setAttribute(attr, String(data.value));
+      duration = readDuration();
+      updateTimedElements(visualTime);
     } else if (data.action === "patch-text") {
-      selectedElement.textContent = String(data.value || "");
+      actionElement.textContent = String(data.value == null ? "" : data.value);
     } else {
       return false;
     }
@@ -409,15 +599,96 @@ export const previewBridgeSource = String.raw`
 
   function setTime(time, opts) {
     currentTime = Math.max(0, Math.min(time, duration));
-    seekTimeline(currentTime);
-    updateTimedElements();
+    if (currentTime < duration) {
+      visualTime = currentTime;
+    }
+    seekTimeline(visualTime);
+    updateTimedElements(visualTime);
     if (!opts || !opts.silent) post("timeupdate", { currentTime: currentTime, duration: duration });
+  }
+
+  function waitForInitialAssets(done, failed) {
+    var waits = [];
+    var images = document.images || [];
+    for (var imageIndex = 0; imageIndex < images.length; imageIndex++) {
+      var image = images[imageIndex];
+      if (!image.getAttribute("src") && !image.getAttribute("srcset")) continue;
+      image.loading = "eager";
+      if (image.complete && image.naturalWidth > 0) continue;
+      if (typeof image.decode === "function") {
+        waits.push(image.decode());
+      } else {
+        waits.push(new Promise(function (resolve, reject) {
+          image.addEventListener("load", resolve, { once: true });
+          image.addEventListener("error", reject, { once: true });
+        }));
+      }
+    }
+    if (document.fonts && document.fonts.ready) {
+      waits.push(Promise.resolve(document.fonts.ready).catch(function () {}));
+    }
+    if (!waits.length) {
+      done();
+      return;
+    }
+    var timeout = setTimeout(function () {
+      failed("AI Motion assets are still loading. Check the image sources or network connection.");
+    }, 8000);
+    Promise.all(waits).then(function () {
+      clearTimeout(timeout);
+      done();
+    }, function () {
+      clearTimeout(timeout);
+      failed("An AI Motion image could not be decoded. Replace or reload the image.");
+    });
+  }
+
+  function announceFramePresented(requestId) {
+    if (!requestId) return;
+	  pendingPresentationRequestId = requestId;
+	  if (presentationScheduled) return;
+	  presentationScheduled = true;
+    var afterAssets = function () {
+      requestAnimationFrame(function () {
+        requestAnimationFrame(function () {
+		  presentationScheduled = false;
+		  var presentedRequestId = pendingPresentationRequestId;
+		  pendingPresentationRequestId = null;
+		  if (!presentedRequestId) return;
+          hasPresentedFrame = true;
+          post("frame-presented", {
+			requestId: presentedRequestId,
+            currentTime: currentTime,
+            duration: duration
+          });
+        });
+      });
+    };
+    if (hasPresentedFrame) afterAssets();
+    else waitForInitialAssets(afterAssets, function (message) {
+      presentationScheduled = false;
+      post("error", { message: message });
+    });
+  }
+
+  function applyHostSeek(time, requestId) {
+    if (!ready) {
+      pendingSeek = { time: time, requestId: requestId };
+      if (findComposition()) finishInitialization();
+      return;
+    }
+    try {
+      setTime(time);
+      announceFramePresented(requestId);
+    } catch (error) {
+      post("error", { message: "AI Motion seek failed: " + (error && error.message ? error.message : String(error)) });
+    }
   }
 
   function serializeSnapshot() {
     var clone = document.documentElement.cloneNode(true);
     clone.setAttribute("xmlns", "http://www.w3.org/1999/xhtml");
-	var unsafe = clone.querySelectorAll("script,iframe,object,embed,meta[http-equiv],[data-opencut-studio-selection]");
+	var unsafe = clone.querySelectorAll("script,iframe,object,embed,meta[http-equiv],[data-opencut-studio-selection],[data-opencut-studio-media-drop]");
     for (var i = 0; i < unsafe.length; i++) unsafe[i].remove();
 
     var originalVideos = document.querySelectorAll("video");
@@ -449,7 +720,7 @@ export const previewBridgeSource = String.raw`
 
   function tick(now) {
     if (!ready) return;
-    if (playing) {
+    if (playing && PLAYBACK_MODE === "internal") {
       var delta = (now - lastTick) / 1000;
       lastTick = now;
       setTime(currentTime + delta * playbackRate, { silent: true });
@@ -470,21 +741,21 @@ export const previewBridgeSource = String.raw`
     if (applyEditorAction(data)) {
       return;
     } else if (data.action === "play") {
-      playing = true;
+      playing = PLAYBACK_MODE === "internal";
       lastTick = performance.now();
       announceState();
     } else if (data.action === "pause") {
       playing = false;
       announceState();
     } else if (data.action === "toggle") {
-      playing = !playing;
+      playing = PLAYBACK_MODE === "internal" ? !playing : false;
       lastTick = performance.now();
       announceState();
     } else if (data.action === "seek") {
       var t = typeof data.timeSeconds === "number"
         ? data.timeSeconds
         : (typeof data.frame === "number" ? data.frame / (data.fps || 30) : currentTime);
-      setTime(t);
+      applyHostSeek(t, data.requestId);
     } else if (data.action === "snapshot") {
       var snapshotTime = typeof data.timeSeconds === "number"
         ? data.timeSeconds
@@ -516,18 +787,37 @@ export const previewBridgeSource = String.raw`
   window.addEventListener("resize", updateSelectionOverlay);
   window.addEventListener("scroll", updateSelectionOverlay, true);
 
+  function finishInitialization() {
+    if (ready) return;
+    ready = true;
+    var initialSeek = pendingSeek;
+    pendingSeek = null;
+    try {
+      if (initialSeek) setTime(initialSeek.time, { silent: true });
+      else setTime(0, { silent: true });
+    } catch (error) {
+      post("error", { message: "AI Motion initialization failed: " + (error && error.message ? error.message : String(error)) });
+      return;
+    }
+    ensureSelectionOverlay();
+    post("ready", { duration: duration, currentTime: currentTime, compositionId: compositionId });
+    if (initialSeek) announceFramePresented(initialSeek.requestId);
+    monitorSelectedImages();
+	  scanRuntimeMotion();
+    requestAnimationFrame(tick);
+  }
+
   var tries = 0;
+  if (findComposition()) {
+    finishInitialization();
+    return;
+  }
   var poller = setInterval(function () {
+    if (ready) { clearInterval(poller); return; }
     tries += 1;
     if (findComposition()) {
       clearInterval(poller);
-      ready = true;
-      seekTimeline(0);
-      updateTimedElements();
-      ensureSelectionOverlay();
-      post("ready", { duration: duration, currentTime: 0, compositionId: compositionId });
-	  scanRuntimeMotion();
-      requestAnimationFrame(tick);
+      finishInitialization();
     } else if (tries >= MAX_TRIES) {
       clearInterval(poller);
       post("error", { message: "No seekable window.__timelines composition was found." });

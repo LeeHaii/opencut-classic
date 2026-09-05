@@ -1,12 +1,13 @@
 "use client";
 
-import { useMemo, useState, type ReactNode } from "react";
+import { useMemo, useRef, useState, type ReactNode } from "react";
 import {
 	Braces,
 	Clock3,
 	Diamond,
 	Eye,
 	EyeOff,
+	Image as ImageIcon,
 	Layers3,
 	MousePointer2,
 	Palette,
@@ -22,6 +23,11 @@ import {
 	SelectValue,
 } from "@/components/ui/select";
 import { cn } from "@/utils/ui";
+import {
+	studioPropertyDraftCommitValue,
+	updateStudioPropertyDraft,
+	type StudioPropertyDraft,
+} from "../property-draft";
 import {
 	addStudioEditableAnimation,
 	addStudioKeyframe,
@@ -42,9 +48,11 @@ import {
 	parseStudioDocument,
 	patchCompositionAttribute,
 	postStudioPreviewAction,
+	studioLayerFromPreviewSelection,
 	type StudioLayer,
 	type StudioPatchOperation,
 	type StudioPreviewSelection,
+	type StudioTextField,
 } from "../studio-document";
 import { useHyperframesStudioStore } from "../studio-store";
 import { useActiveStudioElement } from "../use-studio-element";
@@ -63,41 +71,6 @@ const STUDIO_EASES = [
 	{ value: "expo.out", label: "Fast settle" },
 	{ value: "back.out(1.4)", label: "Overshoot" },
 ] as const;
-
-function layerFromPreview({
-	selection,
-	duration,
-}: {
-	selection: StudioPreviewSelection;
-	duration: number;
-}): StudioLayer {
-	return {
-		key: selection.key,
-		id: selection.id,
-		hfId: selection.hfId,
-		selector: selection.selector,
-		label: selection.label,
-		tag: selection.tagName,
-		text: selection.textContent,
-		start: Number(selection.dataAttributes.start) || 0,
-		duration: Number(selection.dataAttributes.duration) || duration,
-		track: Number(selection.dataAttributes["track-index"]) || 0,
-		playbackStart:
-			Number(
-				selection.dataAttributes["media-start"] ??
-					selection.dataAttributes["playback-start"],
-			) || null,
-		playbackStartAttribute: selection.dataAttributes["media-start"]
-			? "media-start"
-			: selection.dataAttributes["playback-start"]
-				? "playback-start"
-				: null,
-		hidden:
-			selection.dataAttributes.hidden === "true" ||
-			selection.dataAttributes.hidden === "1",
-		styles: {},
-	};
-}
 
 export function SceneStudioInspector() {
 	const { located, commitHtml } = useActiveStudioElement();
@@ -119,9 +92,17 @@ export function SceneStudioInspector() {
 		const timedLayer = document.layers.find(
 			(candidate) => candidate.key === selectedLayerKey,
 		);
+		if (timedLayer && previewSelection?.key === selectedLayerKey) {
+			return {
+				...timedLayer,
+				text: previewSelection.textContent,
+				textFields: previewSelection.textFields ?? [],
+				textDisabledReason: previewSelection.textDisabledReason ?? null,
+			};
+		}
 		if (timedLayer) return timedLayer;
 		if (previewSelection?.key === selectedLayerKey) {
-			return layerFromPreview({
+			return studioLayerFromPreviewSelection({
 				selection: previewSelection,
 				duration: document.duration,
 			});
@@ -140,14 +121,17 @@ export function SceneStudioInspector() {
 	const commitLayerPatch = async ({
 		operation,
 		previewAction,
+		targetLayer,
 	}: {
 		operation: StudioPatchOperation;
 		previewAction?: { action: string; payload: Record<string, unknown> };
+		targetLayer?: StudioLayer;
 	}) => {
 		if (!layer) return;
+		const patchLayer = targetLayer ?? layer;
 		let nextHtml = await applyStudioLayerPatches({
 			html: located.element.html,
-			layer,
+			layer: patchLayer,
 			operations: [operation],
 		});
 		if (operation.type === "attribute" && operation.property === "start") {
@@ -328,14 +312,18 @@ function PropertyField({
 	onPreview?: (value: string) => void;
 	onCommit: (value: string) => void;
 }) {
-	const [edit, setEdit] = useState<{
-		sourceValue: string;
-		draft: string;
-	} | null>(null);
-	const displayedValue = edit?.sourceValue === value ? edit.draft : value;
+	const cancelCommitRef = useRef(false);
+	const [edit, setEdit] = useState<StudioPropertyDraft | null>(null);
+	const displayedValue = edit?.draft ?? value;
 	const commit = () => {
-		if (displayedValue !== value) onCommit(displayedValue);
-		else setEdit(null);
+		if (cancelCommitRef.current) {
+			cancelCommitRef.current = false;
+			return;
+		}
+		if (!edit) return;
+		setEdit(null);
+		const nextValue = studioPropertyDraftCommitValue({ draft: edit });
+		if (nextValue !== null) onCommit(nextValue);
 	};
 	return (
 		<label className="grid grid-cols-[78px_minmax(0,1fr)] items-center gap-2">
@@ -347,13 +335,21 @@ function PropertyField({
 				min={min}
 				value={displayedValue}
 				onChange={(event) => {
-					setEdit({ sourceValue: value, draft: event.target.value });
+					setEdit((current) =>
+						updateStudioPropertyDraft({
+							current,
+							sourceValue: value,
+							nextValue: event.target.value,
+						}),
+					);
 					onPreview?.(event.target.value);
 				}}
 				onBlur={commit}
 				onKeyDown={(event) => {
 					if (event.key === "Enter") event.currentTarget.blur();
 					if (event.key === "Escape") {
+						cancelCommitRef.current = true;
+						onPreview?.(edit?.sourceValue ?? value);
 						setEdit(null);
 						event.currentTarget.blur();
 					}
@@ -430,6 +426,27 @@ function CompositionInspector({
 	);
 }
 
+function studioLayerForTextField({
+	layer,
+	field,
+}: {
+	layer: StudioLayer;
+	field: StudioTextField;
+}): StudioLayer {
+	return {
+		...layer,
+		key: field.key,
+		id: field.id,
+		hfId: field.hfId,
+		selector: field.selector,
+		label: field.label,
+		tag: field.tag,
+		text: field.text,
+		textFields: [field],
+		textDisabledReason: null,
+	};
+}
+
 function DesignInspector({
 	layer,
 	previewSelection,
@@ -443,16 +460,29 @@ function DesignInspector({
 	onCommit: (args: {
 		operation: StudioPatchOperation;
 		previewAction?: { action: string; payload: Record<string, unknown> };
+		targetLayer?: StudioLayer;
 	}) => Promise<void>;
 	onDelete: () => Promise<void>;
 }) {
-	const canEditText =
-		/^(a|button|em|h[1-6]|label|li|p|small|span|strong)$/i.test(layer.tag);
 	const isCompositionRoot =
 		previewSelection?.key === layer.key &&
 		Boolean(previewSelection.dataAttributes["composition-id"]);
+	const textFields =
+		previewSelection?.key === layer.key
+			? (previewSelection.textFields ?? [])
+			: layer.textFields;
+	const textDisabledReason =
+		previewSelection?.key === layer.key
+			? previewSelection.textDisabledReason
+			: layer.textDisabledReason;
+	const canEditText = !isCompositionRoot && textFields.length > 0;
 	const computed =
 		previewSelection?.key === layer.key ? previewSelection.computedStyles : {};
+	const canReplaceWithMedia = /^(img|image|svg)$/i.test(layer.tag);
+	const currentMediaName =
+		previewSelection?.key === layer.key
+			? previewSelection.dataAttributes["opencut-media-name"]
+			: undefined;
 	const valueFor = ({
 		property,
 		fallback = "",
@@ -534,33 +564,55 @@ function DesignInspector({
 						)}
 					</Button>
 				</div>
-				{canEditText && (
-					<PropertyField
-						label="Text"
-						value={layer.text}
-						onPreview={(value) =>
-							postStudioPreviewAction({
-								iframe: previewIframe,
-								action: "patch-text",
-								payload: { selector: layer.selector, value },
-							})
-						}
-						onCommit={(value) =>
-							void onCommit({
-								operation: {
-									type: "text-content",
-									property: "textContent",
-									value,
-								},
-								previewAction: {
+				{canEditText &&
+					textFields.map((field) => (
+						<PropertyField
+							key={field.key}
+							label={field.label}
+							value={field.text}
+							onPreview={(value) =>
+								postStudioPreviewAction({
+									iframe: previewIframe,
 									action: "patch-text",
-									payload: { selector: layer.selector, value },
-								},
-							})
-						}
-					/>
+									payload: { selector: field.selector, value },
+								})
+							}
+							onCommit={(value) =>
+								void onCommit({
+									targetLayer: studioLayerForTextField({ layer, field }),
+									operation: {
+										type: "text-content",
+										property: "textContent",
+										value,
+									},
+									previewAction: {
+										action: "patch-text",
+										payload: { selector: field.selector, value },
+									},
+								})
+							}
+						/>
+					))}
+				{!canEditText && !isCompositionRoot && textDisabledReason && (
+					<p className="text-muted-foreground text-[10px] leading-relaxed">
+						{textDisabledReason}
+					</p>
 				)}
 			</Section>
+
+			{canReplaceWithMedia && (
+				<Section title="Media" icon={<ImageIcon className="size-3" />}>
+					<div className="bg-muted/30 rounded-md px-2 py-2 text-[10px] leading-relaxed">
+						<p className="font-medium">
+							{currentMediaName ?? "Replaceable image artwork"}
+						</p>
+						<p className="text-muted-foreground mt-1">
+							Drag an image from the Media tab and drop it directly on this
+							element in the preview.
+						</p>
+					</div>
+				</Section>
+			)}
 
 			<Section title="Timing" icon={<Clock3 className="size-3" />}>
 				<PropertyField

@@ -15,6 +15,7 @@ export type CanvasRendererParams = {
 	height: number;
 	fps: FrameRate;
 	renderHyperframesDom?: boolean;
+	renderHyperframesPlaceholder?: boolean;
 };
 
 export class CanvasRenderer {
@@ -24,17 +25,20 @@ export class CanvasRenderer {
 	height: number;
 	fps: FrameRate;
 	readonly renderHyperframesDom: boolean;
+	readonly renderHyperframesPlaceholder: boolean;
 
 	constructor({
 		width,
 		height,
 		fps,
 		renderHyperframesDom = false,
+		renderHyperframesPlaceholder = true,
 	}: CanvasRendererParams) {
 		this.width = width;
 		this.height = height;
 		this.fps = fps;
 		this.renderHyperframesDom = renderHyperframesDom;
+		this.renderHyperframesPlaceholder = renderHyperframesPlaceholder;
 
 		const surface = createCanvasSurface({ width, height });
 		this.canvas = surface.canvas;
@@ -58,7 +62,20 @@ export class CanvasRenderer {
 		this.context = surface.context;
 	}
 
-	async render({ node, time }: { node: AnyBaseNode; time: number }) {
+	async render({
+		node,
+		time,
+		shouldCommit,
+	}: {
+		node: AnyBaseNode;
+		time: number;
+		/**
+		 * Checked after all asynchronous preparation and immediately before the
+		 * shared compositor is changed. This lets interactive previews discard a
+		 * render that became obsolete while media was resolving.
+		 */
+		shouldCommit?: () => boolean;
+	}): Promise<{ committed: boolean }> {
 		await measureSpanAsync({
 			name: "resolve",
 			fn: () => resolveRenderTree({ node, renderer: this, time }),
@@ -67,6 +84,9 @@ export class CanvasRenderer {
 			name: "buildFrame",
 			fn: () => buildFrameDescriptor({ node, renderer: this }),
 		});
+		if (shouldCommit && !shouldCommit()) {
+			return { committed: false };
+		}
 		wasmCompositor.ensureInitialized({
 			width: this.width,
 			height: this.height,
@@ -79,6 +99,7 @@ export class CanvasRenderer {
 			name: "renderFrame",
 			fn: () => wasmCompositor.render(frame),
 		});
+		return { committed: true };
 	}
 
 	async renderToCanvas({

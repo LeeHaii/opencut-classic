@@ -1,6 +1,13 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+	useCallback,
+	useEffect,
+	useLayoutEffect,
+	useMemo,
+	useRef,
+	useState,
+} from "react";
 import useDeepCompareEffect from "use-deep-compare-effect";
 import { useEditor } from "@/editor/use-editor";
 import { useRafLoop } from "@/hooks/use-raf-loop";
@@ -59,6 +66,9 @@ export function PreviewPanel({
 	overlayControls,
 	overlayInstances,
 	onOverlayVisibilityChange,
+	onFrameRendered,
+	canvasCommitSuspended = false,
+	canvasPresentationKey = "canvas",
 }: {
 	overlayControls: PreviewOverlayControl[];
 	overlayInstances: PreviewOverlayInstance[];
@@ -66,6 +76,9 @@ export function PreviewPanel({
 		overlayId: string;
 		isVisible: boolean;
 	}) => void;
+	onFrameRendered?: (time: number, presentationKey: string) => void;
+	canvasCommitSuspended?: boolean;
+	canvasPresentationKey?: string;
 }) {
 	const containerRef = useRef<HTMLDivElement>(null);
 	const [container, setContainer] = useState<HTMLDivElement | null>(null);
@@ -86,6 +99,9 @@ export function PreviewPanel({
 				overlayControls={overlayControls}
 				overlayInstances={overlayInstances}
 				onOverlayVisibilityChange={onOverlayVisibilityChange}
+				onFrameRendered={onFrameRendered}
+				canvasCommitSuspended={canvasCommitSuspended}
+				canvasPresentationKey={canvasPresentationKey}
 			/>
 			<RenderTreeController />
 		</div>
@@ -127,6 +143,9 @@ function PreviewCanvas({
 	overlayControls,
 	overlayInstances,
 	onOverlayVisibilityChange,
+	onFrameRendered,
+	canvasCommitSuspended,
+	canvasPresentationKey,
 }: {
 	container: HTMLElement | null;
 	onToggleFullscreen: () => void;
@@ -136,12 +155,34 @@ function PreviewCanvas({
 		overlayId: string;
 		isVisible: boolean;
 	}) => void;
+	onFrameRendered?: (time: number, presentationKey: string) => void;
+	canvasCommitSuspended: boolean;
+	canvasPresentationKey: string;
 }) {
 	const canvasMountRef = useRef<HTMLDivElement>(null);
 	const viewportRef = useRef<HTMLDivElement>(null);
 	const lastFrameRef = useRef(-1);
 	const lastSceneRef = useRef<RootNode | null>(null);
+	const lastPresentationKeyRef = useRef<string | null>(null);
 	const renderingRef = useRef(false);
+	const pendingRenderRef = useRef<{
+		node: RootNode;
+		time: number;
+		frame: number;
+		seekGeneration: number;
+		presentationKey: string;
+	} | null>(null);
+	const seekGenerationRef = useRef(0);
+	const commitPolicyRef = useRef({
+		suspended: canvasCommitSuspended,
+		presentationKey: canvasPresentationKey,
+	});
+	useLayoutEffect(() => {
+		commitPolicyRef.current = {
+			suspended: canvasCommitSuspended,
+			presentationKey: canvasPresentationKey,
+		};
+	}, [canvasCommitSuspended, canvasPresentationKey]);
 	const { width: nativeWidth, height: nativeHeight } = usePreviewSize();
 	const viewportSize = useContainerSize({ containerRef: viewportRef });
 	const editor = useEditor();
@@ -161,8 +202,26 @@ function PreviewCanvas({
 			width: nativeWidth,
 			height: nativeHeight,
 			fps: activeProject.settings.fps,
+			renderHyperframesPlaceholder: false,
 		});
 	}, [nativeWidth, nativeHeight, activeProject.settings.fps]);
+	const liveRenderRef = useRef({
+		renderer,
+		renderTree,
+		onFrameRendered,
+		mounted: true,
+	});
+	useLayoutEffect(() => {
+		liveRenderRef.current = {
+			renderer,
+			renderTree,
+			onFrameRendered,
+			mounted: true,
+		};
+		return () => {
+			liveRenderRef.current.mounted = false;
+		};
+	}, [renderer, renderTree, onFrameRendered]);
 
 	// Mount the compositor's output canvas directly into the preview. wgpu
 	// renders straight into this element, so there is no intermediate copy —
@@ -182,8 +241,58 @@ function PreviewCanvas({
 		};
 	}, [renderer]);
 
+	useEffect(
+		() =>
+			editor.playback.onSeek(() => {
+				seekGenerationRef.current += 1;
+			}),
+		[editor],
+	);
+
+	const pumpRenderQueue = useCallback(async () => {
+		if (renderingRef.current) return;
+		renderingRef.current = true;
+		try {
+			while (pendingRenderRef.current) {
+				const request = pendingRenderRef.current;
+				pendingRenderRef.current = null;
+				try {
+					const requestRenderer = liveRenderRef.current.renderer;
+					const result = await requestRenderer.render({
+						node: request.node,
+						time: request.time,
+						shouldCommit: () => {
+							const policy = commitPolicyRef.current;
+							return (
+								liveRenderRef.current.mounted &&
+								liveRenderRef.current.renderer === requestRenderer &&
+								liveRenderRef.current.renderTree === request.node &&
+								!policy.suspended &&
+								policy.presentationKey === request.presentationKey &&
+								seekGenerationRef.current === request.seekGeneration
+							);
+						},
+					});
+					if (result.committed) {
+						lastSceneRef.current = request.node;
+						lastFrameRef.current = request.frame;
+						lastPresentationKeyRef.current = request.presentationKey;
+						liveRenderRef.current.onFrameRendered?.(
+							request.time,
+							request.presentationKey,
+						);
+					}
+				} catch (error) {
+					console.error("Preview canvas render failed", error);
+				}
+			}
+		} finally {
+			renderingRef.current = false;
+		}
+	}, []);
+
 	const render = useCallback(() => {
-		if (!renderTree || renderingRef.current) return;
+		if (!renderTree || canvasCommitSuspended) return;
 
 		const renderTime = Math.min(
 			editor.playback.getCurrentTime(),
@@ -196,20 +305,29 @@ function PreviewCanvas({
 
 		if (
 			frame === lastFrameRef.current &&
-			renderTree === lastSceneRef.current
+			renderTree === lastSceneRef.current &&
+			lastPresentationKeyRef.current === canvasPresentationKey
 		) {
 			return;
 		}
 
-		renderingRef.current = true;
-		lastSceneRef.current = renderTree;
-		lastFrameRef.current = frame;
-		renderer
-			.render({ node: renderTree, time: renderTime })
-			.then(() => {
-				renderingRef.current = false;
-			});
-	}, [renderer, renderTree, editor.playback, editor.timeline]);
+		pendingRenderRef.current = {
+			node: renderTree,
+			time: renderTime,
+			frame,
+			seekGeneration: seekGenerationRef.current,
+			presentationKey: canvasPresentationKey,
+		};
+		void pumpRenderQueue();
+	}, [
+		canvasCommitSuspended,
+		canvasPresentationKey,
+		editor.playback,
+		editor.timeline,
+		pumpRenderQueue,
+		renderTree,
+		renderer,
+	]);
 
 	useRafLoop(render);
 
@@ -308,20 +426,20 @@ function PreviewCanvas({
 								ref={viewportRef}
 								className="relative flex size-full min-h-0 min-w-0 items-center justify-center overflow-hidden"
 							>
-							<div
-								ref={canvasMountRef}
-								className="absolute block border"
-								style={{
-									left: viewport.sceneLeft,
-									top: viewport.sceneTop,
-									width: viewport.sceneWidth,
-									height: viewport.sceneHeight,
-									background:
-										activeProject.settings.background.type === "blur"
-											? "transparent"
-											: activeProject?.settings.background.color,
-								}}
-							/>
+								<div
+									ref={canvasMountRef}
+									className="absolute block border"
+									style={{
+										left: viewport.sceneLeft,
+										top: viewport.sceneTop,
+										width: viewport.sceneWidth,
+										height: viewport.sceneHeight,
+										background:
+											activeProject.settings.background.type === "blur"
+												? "transparent"
+												: activeProject?.settings.background.color,
+									}}
+								/>
 								<PreviewOverlayLayer
 									instances={overlayInstances}
 									plane="under-interaction"

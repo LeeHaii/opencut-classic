@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { PanelView } from "@/components/editor/panels/assets/views/base-panel";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -16,9 +16,10 @@ import {
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { useEditor } from "@/editor/use-editor";
-import type { MediaAsset } from "@/media/types";
-import type { SceneTracks, TimelineElement, TimelineTrack } from "@/timeline";
 import { frameRateToFloat } from "@/fps/utils";
+import { processMediaAssets } from "@/media/processing";
+import { buildElementFromMedia } from "@/timeline/element-utils";
+import { mediaTimeFromSeconds, ZERO_MEDIA_TIME } from "@/wasm";
 import { AlertTriangle, CheckCircle2, RefreshCw, Sparkles } from "lucide-react";
 import { toast } from "sonner";
 import type { PlanScene, StockCandidate, StockProviderId } from "../types";
@@ -55,16 +56,23 @@ function segmentFallback(
 	return segmentTranscriptSegments({ segments });
 }
 
-export function AiPanelView() {
+export function AiGeneratorView({ onComplete }: { onComplete?: () => void }) {
 	const editor = useEditor();
-	const tracks = useEditor(
-		(current) => current.scenes.getActiveSceneOrNull()?.tracks ?? null,
-	);
-	const mediaAssets = useEditor((current) => current.media.getAssets());
 	const store = useRhymxStore();
 	const fileInputRef = useRef<HTMLInputElement>(null);
-	const [selectedAudioKey, setSelectedAudioKey] = useState<string | null>(null);
+	const [sourceAudioFile, setSourceAudioFile] = useState<File | null>(null);
+	const [sourceAudioAssetId, setSourceAudioAssetId] = useState<string | null>(
+		null,
+	);
+	const [sourceAudioAttached, setSourceAudioAttached] = useState(false);
 	const [showSettings, setShowSettings] = useState(false);
+
+	useEffect(() => {
+		useRhymxStore.getState().reset();
+		return () => {
+			useRhymxStore.getState().reset();
+		};
+	}, []);
 
 	const busy =
 		store.step === "transcribing" ||
@@ -88,15 +96,6 @@ export function AiPanelView() {
 				.map((scene) => scene.id),
 		[store.scenes],
 	);
-
-	const voiceoverOptions = useMemo(() => {
-		return collectVoiceoverOptions({ tracks });
-	}, [tracks]);
-
-	const activeOption =
-		voiceoverOptions.find((option) => option.key === selectedAudioKey) ??
-		voiceoverOptions[0] ??
-		null;
 
 	const handlePickFile = useCallback(() => {
 		fileInputRef.current?.click();
@@ -180,33 +179,15 @@ export function AiPanelView() {
 	);
 
 	const handleFile = useCallback(
-		async (file: File | undefined) => {
-			if (!file) {
-				return;
-			}
-			await analyzeVoiceover(file);
+		(file: File | undefined) => {
+			if (!file) return;
+			setSourceAudioFile(file);
+			setSourceAudioAssetId(null);
+			setSourceAudioAttached(false);
+			store.reset();
 		},
-		[analyzeVoiceover],
+		[store],
 	);
-
-	const handleGenerateFromTrack = useCallback(async () => {
-		const element = findTimelineElement({
-			tracks,
-			key: activeOption?.key ?? "",
-		});
-		if (!element) {
-			toast.error("Add an audio clip to the timeline first");
-			return;
-		}
-		const file = await resolveVoiceoverFile({ element, mediaAssets });
-		if (!file) {
-			toast.error("Could not load the audio source for that clip", {
-				description: "Re-import the asset or browse for the file instead.",
-			});
-			return;
-		}
-		await analyzeVoiceover(file);
-	}, [activeOption, analyzeVoiceover, mediaAssets, tracks]);
 
 	/**
 	 * Generates HyperFrames motion scenes for the given planned scenes with
@@ -368,8 +349,56 @@ export function AiPanelView() {
 	}, [mediaScenes, store]);
 
 	const handleApply = useCallback(async () => {
+		if (!sourceAudioFile) {
+			store.setError({ error: "Choose an audio file before generating" });
+			return;
+		}
 		store.setStep({ step: "applying" });
 		try {
+			const project = editor.project.getActive();
+			let audioAssetId = sourceAudioAssetId;
+			let audioDurationSec: number | undefined;
+
+			if (!audioAssetId) {
+				const [processedAudio] = await processMediaAssets({
+					files: [sourceAudioFile],
+				});
+				if (!processedAudio || processedAudio.type !== "audio") {
+					throw new Error("The selected file could not be imported as audio");
+				}
+				const addedAudio = await editor.media.addMediaAsset({
+					projectId: project.metadata.id,
+					asset: processedAudio,
+				});
+				if (!addedAudio) {
+					throw new Error("Could not save the voiceover to this project");
+				}
+				audioAssetId = addedAudio.id;
+				audioDurationSec = addedAudio.duration;
+				setSourceAudioAssetId(addedAudio.id);
+			} else {
+				audioDurationSec = editor.media
+					.getAssets()
+					.find((asset) => asset.id === audioAssetId)?.duration;
+			}
+
+			if (!sourceAudioAttached) {
+				const durationSec =
+					audioDurationSec ??
+					Math.max(0.1, ...store.scenes.map((scene) => scene.endTimeSec));
+				editor.timeline.insertElement({
+					element: buildElementFromMedia({
+						mediaId: audioAssetId,
+						mediaType: "audio",
+						name: sourceAudioFile.name,
+						duration: mediaTimeFromSeconds({ seconds: durationSec }),
+						startTime: ZERO_MEDIA_TIME,
+					}),
+					placement: { mode: "auto" },
+				});
+				setSourceAudioAttached(true);
+			}
+
 			const captionCues = store.includeCaptions
 				? buildCaptionCues({ scenes: store.scenes, mode: store.captionMode })
 				: [];
@@ -384,14 +413,23 @@ export function AiPanelView() {
 			toast.success("AI edit applied", {
 				description: `${result.insertedMedia} clips · ${result.insertedTemplates} motion graphics · ${result.insertedCaptions} captions${result.skippedScenes > 0 ? ` · ${result.skippedScenes} skipped` : ""}`,
 			});
+			await editor.save.flush();
 			store.reset();
+			onComplete?.();
 		} catch (error) {
 			store.setError({
 				error: error instanceof Error ? error.message : "Apply failed",
 			});
 			store.setStep({ step: "reviewing" });
 		}
-	}, [editor, store]);
+	}, [
+		editor,
+		onComplete,
+		sourceAudioAssetId,
+		sourceAudioAttached,
+		sourceAudioFile,
+		store,
+	]);
 
 	const readyToApply =
 		store.scenes.length > 0 &&
@@ -423,15 +461,18 @@ export function AiPanelView() {
 					type="file"
 					accept="audio/*"
 					className="hidden"
-					onChange={(event) => void handleFile(event.target.files?.[0])}
+					onChange={(event) => {
+						handleFile(event.target.files?.[0]);
+						event.target.value = "";
+					}}
 				/>
 
 				{store.step === "idle" && !store.error && (
 					<div className="text-muted-foreground flex flex-col gap-2 px-1 text-xs">
 						<p>
-							Pick a voiceover clip from your timeline and the AI plans your
-							video: it transcribes, splits scenes, picks stock footage or
-							motion graphics, and lays everything on the timeline.
+							Choose a voiceover file and the AI plans your video: it
+							transcribes, splits scenes, picks stock footage or motion
+							graphics, and lays everything on the timeline.
 						</p>
 					</div>
 				)}
@@ -440,28 +481,19 @@ export function AiPanelView() {
 					<div className="flex flex-col gap-2">
 						<div className="flex flex-col gap-1">
 							<Label className="text-[11px]">Source audio</Label>
-							<Select
-								value={activeOption?.key ?? ""}
-								onValueChange={(value) => setSelectedAudioKey(value)}
-								disabled={busy || voiceoverOptions.length === 0}
+							<button
+								type="button"
+								className="border-input bg-background hover:bg-accent flex min-h-12 items-center justify-between gap-3 rounded-md border px-3 py-2 text-left text-xs disabled:opacity-50"
+								onClick={handlePickFile}
+								disabled={busy}
 							>
-								<SelectTrigger className="h-8 text-xs">
-									<SelectValue
-										placeholder={
-											voiceoverOptions.length > 0
-												? "Select audio track"
-												: "No audio clips on the timeline"
-										}
-									/>
-								</SelectTrigger>
-								<SelectContent>
-									{voiceoverOptions.map((option) => (
-										<SelectItem key={option.key} value={option.key}>
-											{option.label}
-										</SelectItem>
-									))}
-								</SelectContent>
-							</Select>
+								<span className="min-w-0 truncate">
+									{sourceAudioFile?.name ?? "Browse for an audio file"}
+								</span>
+								<span className="text-muted-foreground shrink-0">
+									{sourceAudioFile ? "Replace" : "Browse"}
+								</span>
+							</button>
 						</div>
 						<div className="flex items-end gap-2">
 							<div className="flex min-w-0 flex-1 flex-col gap-1">
@@ -492,20 +524,14 @@ export function AiPanelView() {
 							</div>
 							<Button
 								className="flex-1"
-								onClick={() => void handleGenerateFromTrack()}
-								disabled={busy || voiceoverOptions.length === 0}
+								onClick={() =>
+									sourceAudioFile && void analyzeVoiceover(sourceAudioFile)
+								}
+								disabled={busy || !sourceAudioFile}
 							>
 								{store.scenes.length > 0 ? "Re-analyze audio" : "Generate plan"}
 							</Button>
 						</div>
-						<button
-							type="button"
-							className="text-muted-foreground hover:text-foreground w-fit px-0.5 text-left text-[11px] underline-offset-2 hover:underline disabled:opacity-50"
-							onClick={handlePickFile}
-							disabled={busy}
-						>
-							…or browse an audio file instead
-						</button>
 					</div>
 				)}
 
@@ -960,13 +986,6 @@ function formatTime(seconds: number): string {
 	return `${minutes}:${String(rest).padStart(2, "0")}`;
 }
 
-// --- Voiceover source selection -------------------------------------------------
-
-interface VoiceoverOption {
-	key: string;
-	label: string;
-}
-
 const TRANSCRIPTION_LANGUAGES: Array<{ code: string; label: string }> = [
 	{ code: "", label: "Auto-detect" },
 	{ code: "en", label: "English" },
@@ -990,92 +1009,3 @@ const TRANSCRIPTION_LANGUAGES: Array<{ code: string; label: string }> = [
 	{ code: "ja", label: "Japanese" },
 	{ code: "ko", label: "Korean" },
 ];
-
-function collectVoiceoverOptions({
-	tracks,
-}: {
-	tracks: SceneTracks | null;
-}): VoiceoverOption[] {
-	if (!tracks) return [];
-	const allTracks: TimelineTrack[] = [
-		...tracks.audio,
-		...tracks.overlay,
-		tracks.main,
-	];
-	const options: VoiceoverOption[] = [];
-	for (const track of allTracks) {
-		for (const element of track.elements) {
-			if (!isAudibleElement(element)) continue;
-			options.push({
-				key: `${track.id}:${element.id}`,
-				label:
-					element.name ||
-					(element.type === "video" ? `${track.name} video audio` : track.name),
-			});
-		}
-	}
-	return options;
-}
-
-function isAudibleElement(element: TimelineElement): boolean {
-	return element.type === "audio" || element.type === "video";
-}
-
-function findTimelineElement({
-	tracks,
-	key,
-}: {
-	tracks: SceneTracks | null;
-	key: string;
-}): TimelineElement | null {
-	if (!tracks || !key) return null;
-	const [trackId, ...rest] = key.split(":");
-	const elementId = rest.join(":");
-	const allTracks: TimelineTrack[] = [
-		...tracks.audio,
-		...tracks.overlay,
-		tracks.main,
-	];
-	for (const track of allTracks) {
-		if (track.id !== trackId) continue;
-		for (const element of track.elements) {
-			if (element.id === elementId && isAudibleElement(element)) {
-				return element;
-			}
-		}
-	}
-	return null;
-}
-
-/**
- * Resolves the actual audio bytes behind a timeline element. Uploads come
- * straight from the media store's in-memory File; library clips are fetched
- * into a transient File so nothing depends on a stable filesystem path.
- */
-async function resolveVoiceoverFile({
-	element,
-	mediaAssets,
-}: {
-	element: TimelineElement;
-	mediaAssets: MediaAsset[];
-}): Promise<File | null> {
-	if ("mediaId" in element) {
-		const asset = mediaAssets.find((item) => item.id === element.mediaId);
-		return asset?.file ?? null;
-	}
-	if (element.type === "audio" && element.sourceType === "library") {
-		try {
-			const response = await fetch(element.sourceUrl);
-			if (!response.ok) return null;
-			const blob = await response.blob();
-			const name =
-				element.sourceUrl.split("/").pop()?.split("?")[0] || "voiceover";
-			return new File([blob], decodeURIComponent(name), {
-				type: blob.type || "audio/mpeg",
-			});
-		} catch {
-			return null;
-		}
-	}
-	return null;
-}

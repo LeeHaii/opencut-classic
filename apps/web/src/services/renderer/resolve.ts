@@ -304,6 +304,12 @@ async function resolveHyperframesNode({
 	node: HyperframesNode;
 	context: ResolveContext;
 }): Promise<ResolvedVisualSourceNodeState | null> {
+	if (
+		!context.renderer.renderHyperframesDom &&
+		!context.renderer.renderHyperframesPlaceholder
+	) {
+		return null;
+	}
 	const poster = await loadHyperframesPoster(node.params);
 	const visualState = resolveVisualState({
 		params: node.params,

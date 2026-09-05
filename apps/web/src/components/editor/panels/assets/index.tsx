@@ -13,14 +13,14 @@ import { SoundsView } from "@/sounds/components/assets-view";
 import { StickersView } from "@/stickers/components/assets-view";
 import { TextView } from "@/text/components/assets-view";
 import { EffectsView } from "@/effects/components/assets-view";
-import { AiPanelView } from "@/plugins/rhymx/ui/ai-panel-view";
 import { MotionLibraryView } from "@/plugins/rhymx/ui/motion-library-view";
 import { StockPanelView } from "@/plugins/rhymx/ui/stock-panel-view";
 import { AiMotionPanelView } from "@/hyperframes/components/ai-motion-panel";
 import { StudioPanelView } from "@/hyperframes/components/studio-panel";
+import { cn } from "@/utils/ui";
 
 export function AssetsPanel() {
-	const { activeTab } = useAssetsPanelStore();
+	const { activeTab, studioTabVisible } = useAssetsPanelStore();
 
 	const viewMap: Record<Tab, React.ReactNode> = {
 		media: <MediaView />,
@@ -40,7 +40,6 @@ export function AssetsPanel() {
 				Adjustment view coming soon...
 			</div>
 		),
-		ai: <AiPanelView />,
 		motion: <MotionLibraryView />,
 		hyperframes: <AiMotionPanelView />,
 		studio: <StudioPanelView />,
@@ -48,7 +47,12 @@ export function AssetsPanel() {
 	};
 
 	return (
-		<div className="panel bg-background flex h-full rounded-sm border overflow-hidden">
+		<div
+			className={cn(
+				"panel bg-background flex h-full rounded-sm border overflow-hidden",
+				!studioTabVisible && "[&_[aria-label='Scene_Studio']]:hidden",
+			)}
+		>
 			<TabBar />
 			<Separator orientation="vertical" />
 			<div className="flex-1 overflow-hidden">{viewMap[activeTab]}</div>

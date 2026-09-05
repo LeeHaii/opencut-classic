@@ -13,7 +13,6 @@ import {
 	TextIcon,
 	Settings01Icon,
 	SlidersHorizontalIcon,
-	AiMagicIcon,
 	SparklesIcon,
 	Video01Icon,
 } from "@hugeicons/core-free-icons";
@@ -29,7 +28,6 @@ export const TAB_KEYS = [
 	"transitions",
 	"captions",
 	"adjustment",
-	"ai",
 	"motion",
 	"hyperframes",
 	"studio",
@@ -83,10 +81,6 @@ export const tabs = {
 		icon: createHugeiconsIcon({ icon: SlidersHorizontalIcon }),
 		label: "Adjustment",
 	},
-	ai: {
-		icon: createHugeiconsIcon({ icon: AiMagicIcon }),
-		label: "AI",
-	},
 	motion: {
 		icon: createHugeiconsIcon({ icon: SparklesIcon }),
 		label: "Motion",
@@ -115,6 +109,9 @@ export type MediaSortOrder = "asc" | "desc";
 interface AssetsPanelStore {
 	activeTab: Tab;
 	setActiveTab: (tab: Tab) => void;
+	studioTabVisible: boolean;
+	showStudioTab: () => void;
+	hideStudioTab: () => void;
 	highlightMediaId: string | null;
 	requestRevealMedia: (mediaId: string) => void;
 	clearHighlight: () => void;
@@ -125,13 +122,28 @@ interface AssetsPanelStore {
 	mediaSortBy: MediaSortKey;
 	mediaSortOrder: MediaSortOrder;
 	setMediaSort: (args: { key: MediaSortKey; order: MediaSortOrder }) => void;
+	currentMediaFolderId: string;
+	setCurrentMediaFolderId: (folderId: string) => void;
 }
 
 export const useAssetsPanelStore = create<AssetsPanelStore>()(
 	persist(
 		(set) => ({
 			activeTab: "media",
-			setActiveTab: (tab) => set({ activeTab: tab }),
+			setActiveTab: (tab) =>
+				set((state) =>
+					tab === "studio" && !state.studioTabVisible
+						? state
+						: { activeTab: tab },
+				),
+			studioTabVisible: false,
+			showStudioTab: () => set({ studioTabVisible: true, activeTab: "studio" }),
+			hideStudioTab: () =>
+				set((state) => ({
+					studioTabVisible: false,
+					activeTab:
+						state.activeTab === "studio" ? "hyperframes" : state.activeTab,
+				})),
 			highlightMediaId: null,
 			requestRevealMedia: (mediaId) =>
 				set({ activeTab: "media", highlightMediaId: mediaId }),
@@ -142,6 +154,9 @@ export const useAssetsPanelStore = create<AssetsPanelStore>()(
 			mediaSortOrder: "asc",
 			setMediaSort: ({ key, order }) =>
 				set({ mediaSortBy: key, mediaSortOrder: order }),
+			currentMediaFolderId: "__root__",
+			setCurrentMediaFolderId: (currentMediaFolderId) =>
+				set({ currentMediaFolderId }),
 		}),
 		{
 			name: "assets-panel",

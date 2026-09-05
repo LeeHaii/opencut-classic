@@ -11,6 +11,8 @@ export interface StudioLayer {
 	label: string;
 	tag: string;
 	text: string;
+	textFields: StudioTextField[];
+	textDisabledReason: string | null;
 	start: number;
 	duration: number;
 	track: number;
@@ -18,6 +20,17 @@ export interface StudioLayer {
 	playbackStartAttribute: "media-start" | "playback-start" | null;
 	hidden: boolean;
 	styles: Record<string, string>;
+}
+
+export interface StudioTextField {
+	key: string;
+	id: string | null;
+	hfId: string | null;
+	selector: string;
+	label: string;
+	tag: string;
+	text: string;
+	source: "self" | "descendant";
 }
 
 export interface StudioDocument {
@@ -36,9 +49,48 @@ export interface StudioPreviewSelection {
 	label: string;
 	tagName: string;
 	textContent: string;
+	textFields: StudioTextField[];
+	textDisabledReason: string | null;
 	dataAttributes: Record<string, string>;
 	computedStyles: Record<string, string>;
 	boundingBox: { x: number; y: number; width: number; height: number };
+}
+
+export function studioLayerFromPreviewSelection({
+	selection,
+	duration,
+}: {
+	selection: StudioPreviewSelection;
+	duration: number;
+}): StudioLayer {
+	return {
+		key: selection.key,
+		id: selection.id,
+		hfId: selection.hfId,
+		selector: selection.selector,
+		label: selection.label,
+		tag: selection.tagName,
+		text: selection.textContent,
+		textFields: selection.textFields ?? [],
+		textDisabledReason: selection.textDisabledReason ?? null,
+		start: Number(selection.dataAttributes.start) || 0,
+		duration: Number(selection.dataAttributes.duration) || duration,
+		track: Number(selection.dataAttributes["track-index"]) || 0,
+		playbackStart:
+			Number(
+				selection.dataAttributes["media-start"] ??
+					selection.dataAttributes["playback-start"],
+			) || null,
+		playbackStartAttribute: selection.dataAttributes["media-start"]
+			? "media-start"
+			: selection.dataAttributes["playback-start"]
+				? "playback-start"
+				: null,
+		hidden:
+			selection.dataAttributes.hidden === "true" ||
+			selection.dataAttributes.hidden === "1",
+		styles: {},
+	};
 }
 
 export type StudioPatchOperation =
@@ -354,6 +406,8 @@ export function parseStudioDocument(html: string): StudioDocument | null {
 					.trim()
 					.replace(/\s+/g, " ")
 					.slice(0, 120),
+				textFields: [],
+				textDisabledReason: null,
 				start: Math.max(
 					0,
 					finiteNumber({ value: element.getAttribute("data-start") }),
@@ -432,10 +486,11 @@ function applyDomPatch({
 	operation: StudioPatchOperation;
 }): void {
 	if (operation.type === "inline-style") {
-		if (!(element instanceof HTMLElement)) return;
+		const styled = element as Element & { style?: CSSStyleDeclaration };
+		if (!styled.style) return;
 		if (operation.value === null)
-			element.style.removeProperty(operation.property);
-		else element.style.setProperty(operation.property, operation.value);
+			styled.style.removeProperty(operation.property);
+		else styled.style.setProperty(operation.property, operation.value);
 		return;
 	}
 	if (operation.type === "attribute") {

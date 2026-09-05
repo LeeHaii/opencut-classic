@@ -61,7 +61,7 @@ export async function transcribeVoiceover({
 
 	if (!apiKey) {
 		throw new Error(
-			"No transcription backend configured. Add a Groq API key in AI panel settings.",
+			"No transcription backend configured. Add a Groq API key in AI settings.",
 		);
 	}
 	const result = await groqTranscribeAudio({

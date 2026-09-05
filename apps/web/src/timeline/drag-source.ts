@@ -23,6 +23,7 @@ interface ActiveTimelineDrag {
  */
 export class TimelineDragSource {
 	private active: ActiveTimelineDrag | null = null;
+	private listeners = new Set<() => void>();
 
 	begin({
 		dataTransfer,
@@ -36,10 +37,13 @@ export class TimelineDragSource {
 		dataTransfer.setData(TIMELINE_DRAG_MIME, JSON.stringify(dragData));
 		dataTransfer.effectAllowed = "copy";
 		this.active = { dragData, resolveDragData };
+		this.notify();
 	}
 
 	end(): void {
+		if (!this.active) return;
 		this.active = null;
+		this.notify();
 	}
 
 	getActive(): TimelineDragData | null {
@@ -53,5 +57,14 @@ export class TimelineDragSource {
 
 	isActive(): boolean {
 		return this.active !== null;
+	}
+
+	subscribe(listener: () => void): () => void {
+		this.listeners.add(listener);
+		return () => this.listeners.delete(listener);
+	}
+
+	private notify(): void {
+		this.listeners.forEach((listener) => listener());
 	}
 }

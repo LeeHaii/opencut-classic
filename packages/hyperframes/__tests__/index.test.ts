@@ -14,6 +14,8 @@ import {
 	PREVIEW_MESSAGE_SOURCE,
 } from "../src/prepare-preview.js";
 import { internalMediaUrl, parseInternalMediaUrl } from "../src/media-url.js";
+import { validateSelectedImageUsage } from "../src/selected-image.js";
+import { previewBridgeSource } from "../src/bridge-source.js";
 
 const sample = (id: string) => `<!DOCTYPE html><html><body>
 <div id="${id}" data-composition-id="${id}" data-start="0" data-duration="3" data-width="1920" data-height="1080">
@@ -107,6 +109,7 @@ describe("prompt + seed", () => {
 		expect(prompt).toContain('window.__timelines["s1"]');
 		expect(prompt).toContain("MANDATORY ANIMATION CONTRACT");
 		expect(prompt).toContain("literal, stable CSS selector strings");
+		expect(prompt).toContain("every user-visible text leaf");
 		expect(seed).toContain('tl.from("#s1 h1"');
 		expect(seed).not.toContain("rootSel");
 		expect(prompt).not.toContain("${");
@@ -121,6 +124,7 @@ describe("prompt + seed", () => {
 			height: 1080,
 			fps: 30,
 			selectedImage: {
+				id: "image-abc123",
 				name: "Mount Fuji",
 				placeholder: "opencut-selected-image://abc123",
 				sourcePageUrl: "https://commons.wikimedia.org/wiki/File:Fuji.jpg",
@@ -130,9 +134,8 @@ describe("prompt + seed", () => {
 				height: 1600,
 			},
 		});
-		expect(prompt).toContain(
-			"exact HTML src: opencut-selected-image://abc123",
-		);
+		expect(prompt).toContain("exact HTML src: opencut-selected-image://abc123");
+		expect(prompt).toContain('data-opencut-selected-image="image-abc123"');
 		expect(prompt).toContain("Never use the remote source URL in HTML");
 		expect(prompt).toContain("Example Author — CC BY-SA");
 	});
@@ -153,6 +156,44 @@ describe("prompt + seed", () => {
 		expect(prompt).toContain(currentComposition);
 		expect(prompt).toContain("Return the COMPLETE updated standalone HTML");
 		expect(prompt).not.toContain("Create ONE NEW HyperFrames");
+	});
+});
+
+describe("selected image validation", () => {
+	const requirement = {
+		id: "image-abc123",
+		placeholder: "opencut-selected-image://abc123",
+	};
+
+	test("accepts one marked img using the exact placeholder", () => {
+		const html = `<img data-opencut-selected-image="image-abc123" src="opencut-selected-image://abc123" alt="Selected">`;
+		expect(validateSelectedImageUsage(html, requirement)).toEqual({
+			valid: true,
+		});
+	});
+
+	test("rejects missing, duplicated, unmarked, and non-img placeholders", () => {
+		expect(validateSelectedImageUsage("<div></div>", requirement).valid).toBe(
+			false,
+		);
+		expect(
+			validateSelectedImageUsage(
+				`<img data-opencut-selected-image="image-abc123" src="${requirement.placeholder}"><img src="${requirement.placeholder}">`,
+				requirement,
+			).valid,
+		).toBe(false);
+		expect(
+			validateSelectedImageUsage(
+				`<img src="${requirement.placeholder}">`,
+				requirement,
+			).valid,
+		).toBe(false);
+		expect(
+			validateSelectedImageUsage(
+				`<div data-opencut-selected-image="image-abc123" data-src="${requirement.placeholder}"></div>`,
+				requirement,
+			).valid,
+		).toBe(false);
 	});
 });
 
@@ -214,17 +255,60 @@ describe("design skills", () => {
 });
 
 describe("preparePreviewHtml", () => {
+	test("keeps the injected preview bridge syntactically valid", () => {
+		expect(() => new Function(previewBridgeSource)).not.toThrow();
+	});
+
 	test("appends bridge and strips nothing from source", () => {
-		const prepared = preparePreviewHtml(sample("d4"));
+		const prepared = preparePreviewHtml(sample("d4"), {
+			previewToken: 'scene-4<&"',
+		});
 		expect(prepared).toContain(PREVIEW_MESSAGE_SOURCE);
+		expect(prepared).toContain('data-preview-token="scene-4&lt;&amp;&quot;"');
+		expect(prepared).toContain('data-playback-mode="internal"');
+		expect(prepared).toContain("previewToken: PREVIEW_TOKEN");
 		expect(prepared).toContain('data.action === "snapshot"');
 		expect(prepared).toContain('post("snapshot"');
 		expect(prepared).toContain('data.action === "select-element"');
 		expect(prepared).toContain('post("element-selected"');
 		expect(prepared).toContain('post("motion-snapshot"');
 		expect(prepared).toContain('data.action === "scan-motion"');
+		expect(prepared).toContain('post("selected-image-loaded"');
+		expect(prepared).toContain('post("selected-image-error"');
+		expect(prepared).toContain(
+			'authoredSource.indexOf("opencut-media://local/")',
+		);
 		expect(prepared).toContain("data-opencut-studio-selection");
+		expect(prepared).toContain("TEXT_BEARING_TAGS");
+		expect(prepared).toContain("collectTextFields");
+		expect(prepared).toContain("actionElement.textContent");
+		expect(prepared).toContain('data.action === "resolve-media-drop-target"');
+		expect(prepared).toContain('post(dropTarget ? "media-drop-target"');
+		expect(prepared).toContain("data-opencut-studio-media-drop");
 		expect(prepared).toContain("</body>");
+	});
+
+	test("marks host-driven previews as external-clock compositions", () => {
+		const prepared = preparePreviewHtml(sample("external-clock"), {
+			playbackMode: "external",
+		});
+		expect(prepared).toContain('data-playback-mode="external"');
+		expect(prepared).toContain('PLAYBACK_MODE === "internal"');
+		expect(prepared).toContain("seekTimeline(visualTime)");
+		expect(prepared).toContain("updateTimedElements(visualTime)");
+	});
+
+	test("includes the host seek protocol (browser tests verify presentation)", () => {
+		const prepared = preparePreviewHtml(sample("paint-handshake"), {
+			playbackMode: "external",
+		});
+		expect(prepared).toContain(
+			"pendingSeek = { time: time, requestId: requestId }",
+		);
+		expect(prepared).toContain("if (initialSeek) setTime(initialSeek.time");
+		expect(prepared).toContain('post("frame-presented"');
+		expect(prepared).toContain("requestId: requestId");
+		expect(prepared).toContain("requestAnimationFrame(function ()");
 	});
 
 	test("replaces cdn gsap when inline source provided", () => {

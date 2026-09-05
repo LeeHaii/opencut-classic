@@ -1,12 +1,19 @@
 use base64::Engine as _;
-use hyperframes::{composition_dirs_in, media_refs};
+use hyperframes::{
+    ImageFit, VisualTarget, WebImageIntent, classify_web_image_intent, composition_dirs_in,
+    derive_web_image_query, media_refs, replace_visual_with_image,
+};
 use reqwest::blocking::{Client, Response};
 use reqwest::redirect::Policy;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use std::collections::{HashMap, VecDeque};
 use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{
+    Mutex, OnceLock,
+    atomic::{AtomicU64, Ordering},
+};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tauri::AppHandle;
 
@@ -15,8 +22,108 @@ const MAX_SEARCH_RESULTS: usize = 12;
 const MAX_IMAGE_BYTES: usize = 12 * 1024 * 1024;
 const MIN_IMAGE_WIDTH: u32 = 800;
 const MAX_IMAGE_PIXELS: u64 = 100_000_000;
+const MAX_PREVIEW_MEDIA_CACHE_BYTES: usize = 32 * 1024 * 1024;
 const SELECTED_IMAGE_PLACEHOLDER_PREFIX: &str = "opencut-selected-image://";
 static SEARCH_COUNTER: AtomicU64 = AtomicU64::new(0);
+static PREVIEW_MEDIA_CACHE: OnceLock<Mutex<PreviewMediaCache>> = OnceLock::new();
+
+struct PreviewMediaCacheEntry {
+    modified: Option<SystemTime>,
+    file_len: u64,
+    data_url: String,
+}
+
+#[derive(Default)]
+struct PreviewMediaCache {
+    entries: HashMap<PathBuf, PreviewMediaCacheEntry>,
+    order: VecDeque<PathBuf>,
+    total_bytes: usize,
+}
+
+impl PreviewMediaCache {
+    fn get(&mut self, path: &Path, file_len: u64, modified: Option<SystemTime>) -> Option<String> {
+        let matches = self
+            .entries
+            .get(path)
+            .is_some_and(|entry| entry.file_len == file_len && entry.modified == modified);
+        if !matches {
+            if let Some(stale) = self.entries.remove(path) {
+                self.total_bytes = self.total_bytes.saturating_sub(stale.data_url.len());
+                self.order.retain(|candidate| candidate != path);
+            }
+            return None;
+        }
+        let data_url = self.entries.get(path)?.data_url.clone();
+        self.order.retain(|candidate| candidate != path);
+        self.order.push_back(path.to_path_buf());
+        Some(data_url)
+    }
+
+    fn insert(
+        &mut self,
+        path: PathBuf,
+        file_len: u64,
+        modified: Option<SystemTime>,
+        data_url: String,
+    ) {
+        if data_url.len() > MAX_PREVIEW_MEDIA_CACHE_BYTES {
+            return;
+        }
+        if let Some(previous) = self.entries.remove(&path) {
+            self.total_bytes = self.total_bytes.saturating_sub(previous.data_url.len());
+        }
+        self.order.retain(|candidate| candidate != &path);
+        self.total_bytes += data_url.len();
+        self.order.push_back(path.clone());
+        self.entries.insert(
+            path,
+            PreviewMediaCacheEntry {
+                modified,
+                file_len,
+                data_url,
+            },
+        );
+        while self.total_bytes > MAX_PREVIEW_MEDIA_CACHE_BYTES {
+            let Some(oldest) = self.order.pop_front() else {
+                break;
+            };
+            if let Some(removed) = self.entries.remove(&oldest) {
+                self.total_bytes = self.total_bytes.saturating_sub(removed.data_url.len());
+            }
+        }
+    }
+}
+
+fn preview_media_data_url(path: &Path) -> Result<String, String> {
+    let metadata = std::fs::metadata(path)
+        .map_err(|error| format!("could not inspect local image: {error}"))?;
+    let file_len = metadata.len();
+    let modified = metadata.modified().ok();
+    let cache = PREVIEW_MEDIA_CACHE.get_or_init(|| Mutex::new(PreviewMediaCache::default()));
+    if let Some(data_url) = cache
+        .lock()
+        .map_err(|_| "local image preview cache is unavailable".to_string())?
+        .get(path, file_len, modified)
+    {
+        return Ok(data_url);
+    }
+
+    let bytes =
+        std::fs::read(path).map_err(|error| format!("could not read local image: {error}"))?;
+    if bytes.len() > MAX_IMAGE_BYTES {
+        return Err("local image exceeds the preview size limit".to_string());
+    }
+    let (mime, _, _, _) = sniff_image(&bytes)?;
+    let data_url = format!(
+        "data:{mime};base64,{}",
+        base64::engine::general_purpose::STANDARD.encode(bytes)
+    );
+    cache
+        .lock()
+        .map_err(|_| "local image preview cache is unavailable".to_string())?
+        .insert(path.to_path_buf(), file_len, modified, data_url.clone());
+    Ok(data_url)
+}
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -65,7 +172,6 @@ pub struct WebImageSearchResult {
 pub struct ImageIngestRequest {
     pub project_id: String,
     pub element_id: String,
-    pub user_prompt: String,
     pub search_id: String,
     pub candidate_id: String,
 }
@@ -75,7 +181,6 @@ pub struct ImageIngestRequest {
 pub struct AttachmentImageIngestRequest {
     pub project_id: String,
     pub element_id: String,
-    pub user_prompt: String,
     pub data_url: String,
     #[serde(default)]
     pub name: Option<String>,
@@ -99,6 +204,15 @@ pub struct WebImageAsset {
     sha256: String,
 }
 
+#[derive(Debug, Serialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum WebImageSearchOutcome {
+    Results { result: WebImageSearchResult },
+    NotRequested,
+    Denied,
+    NoResults { query: String },
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ResolveMediaRequest {
@@ -114,211 +228,6 @@ fn validate_ids(project_id: &str, element_id: &str) -> Result<(), String> {
         }
     }
     Ok(())
-}
-
-fn normalized_prompt(value: &str) -> String {
-    value.split_whitespace().collect::<Vec<_>>().join(" ")
-}
-
-fn explicitly_denies_search(prompt: &str) -> bool {
-    let lower = prompt.to_ascii_lowercase();
-    [
-        "do not search",
-        "don't search",
-        "dont search",
-        "never search",
-        "no web image",
-        "no online image",
-        "without web image",
-        "without online image",
-    ]
-    .iter()
-    .any(|needle| lower.contains(needle))
-}
-
-fn explicitly_allows_search(prompt: &str) -> bool {
-    if explicitly_denies_search(prompt) {
-        return false;
-    }
-    let lower = normalized_prompt(prompt).to_ascii_lowercase();
-    let image_word = ["image", "images", "photo", "photos", "picture", "pictures"]
-        .iter()
-        .any(|word| lower.contains(word));
-    let search_word = ["search", "find", "look up", "source", "download"]
-        .iter()
-        .any(|word| lower.contains(word));
-    let web_word = ["web", "online", "internet"]
-        .iter()
-        .any(|word| lower.contains(word));
-    let use_from_web = web_word
-        && ["use", "include", "add", "replace", "put", "place", "insert"]
-            .iter()
-            .any(|word| lower.contains(word));
-    let real_image = [
-        "real image",
-        "real images",
-        "actual image",
-        "actual images",
-        "real photo",
-        "real photos",
-    ]
-    .iter()
-    .any(|phrase| lower.contains(phrase));
-    image_word
-        && (search_word
-            || real_image
-            || use_from_web
-            || lower.contains("search images")
-            || lower.contains("find photos"))
-}
-
-fn explicitly_uses_attachment(prompt: &str) -> bool {
-    let lower = normalized_prompt(prompt).to_ascii_lowercase();
-    if [
-        "do not use the image",
-        "don't use the image",
-        "dont use the image",
-        "do not use the attachment",
-        "don't use the attachment",
-        "do not use attached",
-        "don't use attached",
-        "dont use attached",
-        "do not use the attached",
-        "don't use the attached",
-        "dont use the attached",
-        "style reference",
-        "visual reference",
-        "as inspiration",
-    ]
-    .iter()
-    .any(|phrase| lower.contains(phrase))
-    {
-        return false;
-    }
-    let action = [
-        "use", "include", "add", "replace", "put", "place", "insert", "set", "show",
-    ]
-    .iter()
-    .any(|word| {
-        lower.split_whitespace().any(|token| {
-            token.trim_matches(|character: char| !character.is_ascii_alphabetic()) == *word
-        })
-    });
-    let media = [
-        "image",
-        "images",
-        "photo",
-        "photos",
-        "picture",
-        "pictures",
-        "portrait",
-        "attachment",
-        "attached",
-        "this image",
-        "this photo",
-        "this picture",
-    ]
-    .iter()
-    .any(|word| lower.contains(word));
-    action && media
-}
-
-fn derive_query(prompt: &str) -> String {
-    let mut value = normalized_prompt(prompt);
-    let lower = value.to_ascii_lowercase();
-    for marker in [
-        "video about ",
-        "animation about ",
-        "scene about ",
-        "story about ",
-    ] {
-        if let Some(index) = lower.find(marker) {
-            value = value[index + marker.len()..].to_string();
-            if let Some(end) = value.to_ascii_lowercase().find(" and ") {
-                value.truncate(end);
-            }
-            break;
-        }
-    }
-    let lower = value.to_ascii_lowercase();
-    for marker in [
-        "images of ",
-        "image of ",
-        "photos of ",
-        "photo of ",
-        "pictures of ",
-        "picture of ",
-    ] {
-        if let Some(index) = lower.find(marker) {
-            value = value[index + marker.len()..].to_string();
-            break;
-        }
-    }
-    for ending in [
-        " from the web",
-        " from web",
-        " online",
-        " on the internet",
-        " from the internet",
-    ] {
-        if let Some(index) = value.to_ascii_lowercase().find(ending) {
-            value.truncate(index);
-        }
-    }
-    let cleaned = value
-        .trim_matches(|character: char| character.is_whitespace() || ".,;:!?-".contains(character))
-        .trim();
-    let generic_words = [
-        "search",
-        "find",
-        "look",
-        "up",
-        "source",
-        "use",
-        "include",
-        "add",
-        "download",
-        "web",
-        "online",
-        "internet",
-        "real",
-        "actual",
-        "suitable",
-        "image",
-        "images",
-        "photo",
-        "photos",
-        "picture",
-        "pictures",
-        "from",
-        "on",
-        "for",
-        "where",
-        "when",
-        "useful",
-        "the",
-        "this",
-        "an",
-        "a",
-        "video",
-        "animation",
-        "scene",
-    ];
-    let concise = cleaned
-        .split_whitespace()
-        .filter(|word| {
-            let normalized = word
-                .trim_matches(|character: char| ".,;:!?-".contains(character))
-                .to_ascii_lowercase();
-            !generic_words.contains(&normalized.as_str())
-        })
-        .collect::<Vec<_>>()
-        .join(" ");
-    if concise.is_empty() {
-        "editorial photography".to_string()
-    } else {
-        concise.chars().take(160).collect()
-    }
 }
 
 fn text_metadata(value: Option<&serde_json::Value>, fallback: &str) -> String {
@@ -382,12 +291,14 @@ fn search_dir(root: &Path, id: &str) -> Result<PathBuf, String> {
 fn search_images_inner(
     app: AppHandle,
     request: ImageSearchRequest,
-) -> Result<Option<WebImageSearchResult>, String> {
+) -> Result<WebImageSearchOutcome, String> {
     validate_ids(&request.project_id, &request.element_id)?;
-    if !explicitly_allows_search(&request.user_prompt) {
-        return Ok(None);
+    match classify_web_image_intent(&request.user_prompt) {
+        WebImageIntent::Denied => return Ok(WebImageSearchOutcome::Denied),
+        WebImageIntent::NotRequested => return Ok(WebImageSearchOutcome::NotRequested),
+        WebImageIntent::Requested => {}
     }
-    let query = derive_query(&request.user_prompt);
+    let query = derive_web_image_query(&request.user_prompt);
     let limit = request.limit.unwrap_or(8).clamp(4, MAX_SEARCH_RESULTS);
     let mut api_url =
         reqwest::Url::parse(COMMONS_API).map_err(|_| "Wikimedia API URL is invalid".to_string())?;
@@ -504,9 +415,7 @@ fn search_images_inner(
     });
     candidates.truncate(limit);
     if candidates.is_empty() {
-        return Err(format!(
-            "No suitable Wikimedia Commons images were found for “{query}”."
-        ));
+        return Ok(WebImageSearchOutcome::NoResults { query });
     }
     let id = search_id(&query);
     let root = composition_root(&app, &request.project_id, &request.element_id)?;
@@ -523,18 +432,41 @@ fn search_images_inner(
         serde_json::to_vec_pretty(&stored).map_err(|error| error.to_string())?,
     )
     .map_err(|error| format!("could not save image candidates: {error}"))?;
-    Ok(Some(WebImageSearchResult {
-        search_id: id,
-        query,
-        candidates,
-    }))
+    Ok(WebImageSearchOutcome::Results {
+        result: WebImageSearchResult {
+            search_id: id,
+            query,
+            candidates,
+        },
+    })
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StudioImageReplaceRequest {
+    pub project_id: String,
+    pub element_id: String,
+    pub html: String,
+    pub target: VisualTarget,
+    pub data_url: String,
+    pub name: String,
+    #[serde(default)]
+    pub fit: ImageFit,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StudioImageReplaceResult {
+    html: String,
+    asset: WebImageAsset,
+    warnings: Vec<String>,
 }
 
 #[tauri::command]
 pub async fn hf_image_search(
     app: AppHandle,
     request: ImageSearchRequest,
-) -> Result<Option<WebImageSearchResult>, String> {
+) -> Result<WebImageSearchOutcome, String> {
     tauri::async_runtime::spawn_blocking(move || search_images_inner(app, request))
         .await
         .map_err(|error| format!("image search task failed: {error}"))?
@@ -718,7 +650,14 @@ fn decode_image_data_url(value: &str) -> Result<Vec<u8>, String> {
     let (metadata, encoded) = value
         .split_once(',')
         .ok_or_else(|| "attached image is not a valid data URL".to_string())?;
-    if !metadata.starts_with("data:image/") || !metadata.ends_with(";base64") {
+    let declared_mime = metadata
+        .strip_prefix("data:")
+        .and_then(|value| value.strip_suffix(";base64"))
+        .ok_or_else(|| "attached image must be a base64 data URL".to_string())?;
+    if !declared_mime.starts_with("image/")
+        && declared_mime != "application/octet-stream"
+        && !declared_mime.is_empty()
+    {
         return Err("attached image must be a base64 image data URL".to_string());
     }
     if encoded.len() > (MAX_IMAGE_BYTES * 4 / 3) + 8 {
@@ -730,6 +669,8 @@ fn decode_image_data_url(value: &str) -> Result<Vec<u8>, String> {
     if bytes.len() > MAX_IMAGE_BYTES {
         return Err("attached image exceeds the size limit".to_string());
     }
+    sniff_image(&bytes)
+        .map_err(|_| "attached image bytes are not a supported PNG or JPEG image".to_string())?;
     Ok(bytes)
 }
 
@@ -738,9 +679,6 @@ fn ingest_image_inner(
     request: ImageIngestRequest,
 ) -> Result<WebImageAsset, String> {
     validate_ids(&request.project_id, &request.element_id)?;
-    if !explicitly_allows_search(&request.user_prompt) {
-        return Err("web image search was not explicitly authorized in this request".to_string());
-    }
     let root = composition_root(&app, &request.project_id, &request.element_id)?;
     let stored_path = search_dir(&root, &request.search_id)?.join("candidates.json");
     let stored: StoredSearch = serde_json::from_slice(
@@ -795,11 +733,8 @@ pub async fn hf_image_ingest(
 fn ingest_attachment_inner(
     app: AppHandle,
     request: AttachmentImageIngestRequest,
-) -> Result<Option<WebImageAsset>, String> {
+) -> Result<WebImageAsset, String> {
     validate_ids(&request.project_id, &request.element_id)?;
-    if !explicitly_uses_attachment(&request.user_prompt) {
-        return Ok(None);
-    }
     let bytes = decode_image_data_url(&request.data_url)?;
     let root = composition_root(&app, &request.project_id, &request.element_id)?;
     freeze_image(
@@ -819,17 +754,78 @@ fn ingest_attachment_inner(
             query: None,
         },
     )
-    .map(Some)
 }
 
 #[tauri::command]
 pub async fn hf_image_ingest_attachment(
     app: AppHandle,
     request: AttachmentImageIngestRequest,
-) -> Result<Option<WebImageAsset>, String> {
+) -> Result<WebImageAsset, String> {
     tauri::async_runtime::spawn_blocking(move || ingest_attachment_inner(app, request))
         .await
         .map_err(|error| format!("attachment ingest task failed: {error}"))?
+}
+
+fn replace_studio_image_inner(
+    app: AppHandle,
+    request: StudioImageReplaceRequest,
+) -> Result<StudioImageReplaceResult, String> {
+    validate_ids(&request.project_id, &request.element_id)?;
+
+    // Reject unsupported or stale targets before creating a project asset.
+    replace_visual_with_image(
+        &request.html,
+        &request.target,
+        "opencut-media://local/validation.png",
+        "validation",
+        &request.name,
+        request.fit,
+    )?;
+
+    let bytes = decode_image_data_url(&request.data_url)?;
+    let root = composition_root(&app, &request.project_id, &request.element_id)?;
+    let name = if request.name.trim().is_empty() {
+        "Dropped image".to_string()
+    } else {
+        request.name
+    };
+    let asset = freeze_image(
+        &root,
+        &bytes,
+        FrozenImageMetadata {
+            provider: "media-bin",
+            name: name.clone(),
+            source_page_url: String::new(),
+            source_image_url: None,
+            author: "User media library".to_string(),
+            license: "User-provided media".to_string(),
+            attribution: "Imported from the project media bin".to_string(),
+            query: None,
+        },
+    )?;
+    let outcome = replace_visual_with_image(
+        &request.html,
+        &request.target,
+        &asset.internal_url,
+        &asset.id,
+        &name,
+        request.fit,
+    )?;
+    Ok(StudioImageReplaceResult {
+        html: outcome.html,
+        asset,
+        warnings: outcome.warnings,
+    })
+}
+
+#[tauri::command]
+pub async fn hf_studio_replace_image(
+    app: AppHandle,
+    request: StudioImageReplaceRequest,
+) -> Result<StudioImageReplaceResult, String> {
+    tauri::async_runtime::spawn_blocking(move || replace_studio_image_inner(app, request))
+        .await
+        .map_err(|error| format!("studio image replacement task failed: {error}"))?
 }
 
 fn path_from_internal_url(value: &str) -> Option<PathBuf> {
@@ -862,6 +858,7 @@ fn resolve_media_inner(app: AppHandle, request: ResolveMediaRequest) -> Result<S
         .unwrap_or_else(|_| root.join(".media").join("images"));
     let prefix = "opencut-media://local/";
     let mut html = request.html;
+    let mut resolved_in_request = HashMap::<PathBuf, String>::new();
     let mut cursor = 0usize;
     while let Some(relative) = html[cursor..].find(prefix) {
         let start = cursor + relative;
@@ -887,16 +884,13 @@ fn resolve_media_inner(app: AppHandle, request: ResolveMediaRequest) -> Result<S
                 "composition media reference is outside its local image directory".to_string(),
             );
         }
-        let bytes = std::fs::read(&canonical)
-            .map_err(|error| format!("could not read local image: {error}"))?;
-        if bytes.len() > MAX_IMAGE_BYTES {
-            return Err("local image exceeds the preview size limit".to_string());
-        }
-        let (mime, _, _, _) = sniff_image(&bytes)?;
-        let data_url = format!(
-            "data:{mime};base64,{}",
-            base64::engine::general_purpose::STANDARD.encode(bytes)
-        );
+        let data_url = if let Some(resolved) = resolved_in_request.get(&canonical) {
+            resolved.clone()
+        } else {
+            let resolved = preview_media_data_url(&canonical)?;
+            resolved_in_request.insert(canonical, resolved.clone());
+            resolved
+        };
         html.replace_range(start..end, &data_url);
         cursor = start + data_url.len();
     }
@@ -918,65 +912,22 @@ mod tests {
     use super::*;
 
     #[test]
-    fn image_search_requires_explicit_permission() {
-        for prompt in [
-            "Search the web for images of Mount Fuji",
-            "Search online for images of Tokyo",
-            "Use a real photo of Tokyo",
-            "Find real photos of SpaceX launches",
-            "Search for suitable photos where useful",
-            "elon musk image from the web to replace the middle image",
-        ] {
-            assert!(explicitly_allows_search(prompt), "{prompt}");
-        }
-        for prompt in [
-            "Make a cinematic Tokyo animation",
-            "Use cinematic photography style",
-            "Show a real person in a cinematic location",
-            "Use photos but do not search the web",
-        ] {
-            assert!(!explicitly_allows_search(prompt), "{prompt}");
-        }
-    }
-
-    #[test]
-    fn derives_a_bounded_subject_query() {
+    fn serializes_explicit_search_outcomes_for_the_web_shell() {
         assert_eq!(
-            derive_query("Search the web for images of Mount Fuji."),
-            "Mount Fuji"
-        );
-        assert_eq!(derive_query("Use a real photo of Tokyo online."), "Tokyo");
-        assert_eq!(
-            derive_query("Make a video about Mount Everest and use real photos from the web."),
-            "Mount Everest"
+            serde_json::to_value(WebImageSearchOutcome::NotRequested).unwrap(),
+            serde_json::json!({ "kind": "notRequested" })
         );
         assert_eq!(
-            derive_query("Search for suitable photos where useful."),
-            "editorial photography"
+            serde_json::to_value(WebImageSearchOutcome::Denied).unwrap(),
+            serde_json::json!({ "kind": "denied" })
         );
         assert_eq!(
-            derive_query("elon musk image from the web to replace the middle image"),
-            "elon musk"
+            serde_json::to_value(WebImageSearchOutcome::NoResults {
+                query: "Grace Hopper".to_string(),
+            })
+            .unwrap(),
+            serde_json::json!({ "kind": "noResults", "query": "Grace Hopper" })
         );
-    }
-
-    #[test]
-    fn attachment_use_requires_explicit_media_intent() {
-        for prompt in [
-            "replace image in the center with this elon image",
-            "Use the attached photo as the background",
-            "put this portrait in the circle",
-        ] {
-            assert!(explicitly_uses_attachment(prompt), "{prompt}");
-        }
-        for prompt in [
-            "make it feel cinematic",
-            "use this image as a style reference",
-            "use the attached picture as inspiration",
-            "do not use the attached image",
-        ] {
-            assert!(!explicitly_uses_attachment(prompt), "{prompt}");
-        }
     }
 
     #[test]
@@ -986,6 +937,38 @@ mod tests {
         )
         .unwrap();
         assert_eq!(sniff_image(&bytes).unwrap(), ("image/png", "png", 1, 1));
+        let generic = format!(
+            "data:application/octet-stream;base64,{}",
+            base64::engine::general_purpose::STANDARD.encode(&bytes)
+        );
+        assert_eq!(decode_image_data_url(&generic).unwrap(), bytes);
+        let missing_mime = format!(
+            "data:;base64,{}",
+            base64::engine::general_purpose::STANDARD.encode(&bytes)
+        );
+        assert_eq!(decode_image_data_url(&missing_mime).unwrap(), bytes);
         assert!(decode_image_data_url("data:text/plain;base64,SGVsbG8=").is_err());
+        assert!(decode_image_data_url("data:application/octet-stream;base64,SGVsbG8=").is_err());
+    }
+
+    #[test]
+    fn preview_media_cache_reuses_and_invalidates_file_versions() {
+        let mut cache = PreviewMediaCache::default();
+        let path = PathBuf::from("cached-preview.png");
+        let modified = Some(UNIX_EPOCH + Duration::from_secs(10));
+        cache.insert(
+            path.clone(),
+            12,
+            modified,
+            "data:image/png;base64,abc".to_string(),
+        );
+
+        assert_eq!(
+            cache.get(&path, 12, modified).as_deref(),
+            Some("data:image/png;base64,abc")
+        );
+        assert_eq!(cache.get(&path, 13, modified), None);
+        assert!(cache.entries.is_empty());
+        assert_eq!(cache.total_bytes, 0);
     }
 }

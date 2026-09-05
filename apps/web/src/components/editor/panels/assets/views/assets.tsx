@@ -1,11 +1,21 @@
 "use client";
 
 import Image from "next/image";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { PanelView } from "@/components/editor/panels/assets/views/base-panel";
 import { MediaDragOverlay } from "@/components/editor/panels/assets/drag-overlay";
 import { DraggableItem } from "@/components/editor/panels/assets/draggable-item";
 import { Button } from "@/components/ui/button";
+import {
+	Dialog,
+	DialogBody,
+	DialogContent,
+	DialogFooter,
+	DialogHeader,
+	DialogTitle,
+} from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { toast } from "sonner";
 import {
 	ContextMenu,
@@ -47,7 +57,16 @@ import {
 } from "@/components/editor/panels/assets/assets-panel-store";
 import { MASKABLE_ELEMENT_TYPES } from "@/timeline";
 import type { MediaAsset } from "@/media/types";
+import { ROOT_MEDIA_FOLDER_ID, type MediaFolder } from "@/media/types";
+import {
+	CreateMediaFolderCommand,
+	DeleteMediaFolderCommand,
+	MoveMediaAssetsCommand,
+	MoveMediaFolderCommand,
+	RenameMediaFolderCommand,
+} from "@/commands";
 import { cn } from "@/utils/ui";
+import { ChevronRight, Folder, FolderPlus, House } from "lucide-react";
 import {
 	CloudUploadIcon,
 	GridViewIcon,
@@ -59,9 +78,12 @@ import {
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon, type IconSvgElement } from "@hugeicons/react";
 
+const MEDIA_FOLDER_DRAG_MIME = "application/x-opencut-media-folder";
+
 export function MediaView() {
 	const editor = useEditor();
 	const mediaFiles = useEditor((e) => e.media.getAssets());
+	const mediaFolders = useEditor((e) => e.media.getFolders());
 	const activeProject = useEditor((e) => e.project.getActive());
 
 	const {
@@ -72,10 +94,46 @@ export function MediaView() {
 		mediaSortBy,
 		mediaSortOrder,
 		setMediaSort,
+		currentMediaFolderId,
+		setCurrentMediaFolderId,
 	} = useAssetsPanelStore();
 
 	const [isProcessing, setIsProcessing] = useState(false);
 	const [progress, setProgress] = useState(0);
+	const [createFolderDialog, setCreateFolderDialog] = useState({
+		open: false,
+		name: "",
+	});
+	const revealedAsset = highlightMediaId
+		? mediaFiles.find((item) => item.id === highlightMediaId)
+		: undefined;
+	const displayedMediaFolderId = revealedAsset
+		? (revealedAsset.folderId ?? ROOT_MEDIA_FOLDER_ID)
+		: currentMediaFolderId;
+	const mediaPageKey = `${displayedMediaFolderId}\u0000${mediaSortBy}\u0000${mediaSortOrder}`;
+	const [mediaPage, setMediaPage] = useState({
+		key: mediaPageKey,
+		limit: 200,
+	});
+	const visibleMediaLimit =
+		mediaPage.key === mediaPageKey ? mediaPage.limit : 200;
+
+	useEffect(() => {
+		if (
+			currentMediaFolderId !== ROOT_MEDIA_FOLDER_ID &&
+			!mediaFolders.some((folder) => folder.id === currentMediaFolderId)
+		) {
+			setCurrentMediaFolderId(ROOT_MEDIA_FOLDER_ID);
+		}
+	}, [currentMediaFolderId, mediaFolders, setCurrentMediaFolderId]);
+
+	useEffect(() => {
+		if (!highlightMediaId) return;
+		const asset = mediaFiles.find((item) => item.id === highlightMediaId);
+		if (asset) {
+			setCurrentMediaFolderId(asset.folderId ?? ROOT_MEDIA_FOLDER_ID);
+		}
+	}, [highlightMediaId, mediaFiles, setCurrentMediaFolderId]);
 
 	const processFiles = async ({ files }: { files: File[] }) => {
 		if (!files || files.length === 0) return;
@@ -98,7 +156,7 @@ export function MediaView() {
 					for (const asset of processedAssets) {
 						await editor.media.addMediaAsset({
 							projectId: activeProject.metadata.id,
-							asset,
+							asset: { ...asset, folderId: displayedMediaFolderId },
 						});
 					}
 					return {
@@ -149,7 +207,11 @@ export function MediaView() {
 	};
 
 	const filteredMediaItems = useMemo(() => {
-		const filtered = mediaFiles.filter((item) => !item.ephemeral);
+		const filtered = mediaFiles.filter(
+			(item) =>
+				!item.ephemeral &&
+				(item.folderId ?? ROOT_MEDIA_FOLDER_ID) === displayedMediaFolderId,
+		);
 
 		filtered.sort((a, b) => {
 			let valueA: string | number;
@@ -182,14 +244,70 @@ export function MediaView() {
 		});
 
 		return filtered;
-	}, [mediaFiles, mediaSortBy, mediaSortOrder]);
+	}, [displayedMediaFolderId, mediaFiles, mediaSortBy, mediaSortOrder]);
+	const childFolders = useMemo(
+		() =>
+			mediaFolders
+				.filter((folder) => folder.parentId === displayedMediaFolderId)
+				.sort((a, b) => a.name.localeCompare(b.name)),
+		[displayedMediaFolderId, mediaFolders],
+	);
+	const highlightedIndex = highlightMediaId
+		? filteredMediaItems.findIndex((item) => item.id === highlightMediaId)
+		: -1;
+	const effectiveVisibleMediaLimit =
+		highlightedIndex >= 0
+			? Math.max(
+					visibleMediaLimit,
+					Math.ceil((highlightedIndex + 1) / 200) * 200,
+				)
+			: visibleMediaLimit;
+	const visibleMediaItems = useMemo(
+		() => filteredMediaItems.slice(0, effectiveVisibleMediaLimit),
+		[effectiveVisibleMediaLimit, filteredMediaItems],
+	);
+	const breadcrumbs = useMemo(() => {
+		const byId = new Map(mediaFolders.map((folder) => [folder.id, folder]));
+		const result: MediaFolder[] = [];
+		const visited = new Set<string>();
+		let cursor = displayedMediaFolderId;
+		while (cursor !== ROOT_MEDIA_FOLDER_ID && !visited.has(cursor)) {
+			visited.add(cursor);
+			const folder = byId.get(cursor);
+			if (!folder) break;
+			result.unshift(folder);
+			cursor = folder.parentId;
+		}
+		return result;
+	}, [displayedMediaFolderId, mediaFolders]);
 	const orderedMediaIds = useMemo(() => {
 		return filteredMediaItems.map((item) => item.id);
 	}, [filteredMediaItems]);
 
+	const createFolder = ({ name }: { name: string }) => {
+		editor.command.execute({
+			command: new CreateMediaFolderCommand({
+				projectId: activeProject.metadata.id,
+				parentId: displayedMediaFolderId,
+				name,
+			}),
+		});
+		setCreateFolderDialog({ open: false, name: "" });
+	};
+
 	return (
 		<>
 			<input {...fileInputProps} />
+			<CreateMediaFolderDialog
+				open={createFolderDialog.open}
+				name={createFolderDialog.name}
+				existingNames={childFolders.map((folder) => folder.name)}
+				onNameChange={(name) =>
+					setCreateFolderDialog((dialog) => ({ ...dialog, name }))
+				}
+				onOpenChange={(open) => setCreateFolderDialog({ open, name: "" })}
+				onCreate={createFolder}
+			/>
 
 			<PanelView
 				title="Assets"
@@ -202,42 +320,397 @@ export function MediaView() {
 						sortOrder={mediaSortOrder}
 						onSort={handleSort}
 						onImport={openFilePicker}
+						onCreateFolder={() =>
+							setCreateFolderDialog({ open: true, name: "" })
+						}
 					/>
 				}
 				className={cn(isDragOver && "bg-accent/30")}
 				contentClassName="h-full"
 				{...dragProps}
 			>
-				{isDragOver || filteredMediaItems.length === 0 ? (
-					<MediaDragOverlay
-						isVisible={true}
-						isProcessing={isProcessing}
-						progress={progress}
-						onClick={openFilePicker}
+				<SelectableSurface
+					ariaLabel="Assets"
+					orderedIds={orderedMediaIds}
+					revealId={highlightMediaId}
+					onRevealComplete={clearHighlight}
+				>
+					<MediaScopeRegistrar />
+					<MediaBreadcrumbs
+						folders={breadcrumbs}
+						projectId={activeProject.metadata.id}
+						onNavigate={setCurrentMediaFolderId}
 					/>
-				) : (
-					<SelectableSurface
-						ariaLabel="Assets"
-						orderedIds={orderedMediaIds}
-						revealId={highlightMediaId}
-						onRevealComplete={clearHighlight}
-					>
-						<MediaScopeRegistrar />
-						<MediaItemList
-							items={filteredMediaItems}
-							mode={mediaViewMode}
-							onRemove={handleRemove}
+					{isDragOver ||
+					(filteredMediaItems.length === 0 && childFolders.length === 0) ? (
+						<MediaDragOverlay
+							isVisible={true}
+							isProcessing={isProcessing}
+							progress={progress}
+							onClick={openFilePicker}
 						/>
-					</SelectableSurface>
-				)}
+					) : (
+						<>
+							<MediaFolderList
+								folders={childFolders}
+								projectId={activeProject.metadata.id}
+								onOpen={setCurrentMediaFolderId}
+							/>
+							<MediaItemList
+								items={visibleMediaItems}
+								mode={mediaViewMode}
+								onRemove={handleRemove}
+							/>
+							{visibleMediaItems.length < filteredMediaItems.length && (
+								<Button
+									variant="ghost"
+									size="sm"
+									className="mt-3 w-full"
+									onClick={() =>
+										setMediaPage({
+											key: mediaPageKey,
+											limit: visibleMediaLimit + 200,
+										})
+									}
+								>
+									Show 200 more (
+									{filteredMediaItems.length - visibleMediaItems.length}{" "}
+									remaining)
+								</Button>
+							)}
+						</>
+					)}
+				</SelectableSurface>
 			</PanelView>
 		</>
+	);
+}
+
+function CreateMediaFolderDialog({
+	open,
+	name,
+	existingNames,
+	onOpenChange,
+	onNameChange,
+	onCreate,
+}: {
+	open: boolean;
+	name: string;
+	existingNames: string[];
+	onOpenChange: (open: boolean) => void;
+	onNameChange: (name: string) => void;
+	onCreate: (args: { name: string }) => void;
+}) {
+	const inputRef = useRef<HTMLInputElement>(null);
+	const trimmedName = name.trim();
+	const isDuplicate = existingNames.some(
+		(existingName) =>
+			existingName.localeCompare(trimmedName, undefined, {
+				sensitivity: "accent",
+			}) === 0,
+	);
+	const errorMessage = isDuplicate
+		? "A folder with that name already exists here."
+		: null;
+	const canCreate = trimmedName.length > 0 && !isDuplicate;
+
+	const submit = () => {
+		if (!canCreate) return;
+		onCreate({ name: trimmedName });
+	};
+
+	return (
+		<Dialog open={open} onOpenChange={onOpenChange}>
+			<DialogContent
+				className="max-w-sm"
+				onOpenAutoFocus={(event) => {
+					event.preventDefault();
+					inputRef.current?.focus();
+				}}
+			>
+				<form
+					onSubmit={(event) => {
+						event.preventDefault();
+						submit();
+					}}
+				>
+					<DialogHeader>
+						<DialogTitle>Create folder</DialogTitle>
+					</DialogHeader>
+					<DialogBody className="gap-2">
+						<Label htmlFor="media-folder-name">Folder name</Label>
+						<Input
+							ref={inputRef}
+							id="media-folder-name"
+							value={name}
+							onChange={(event) => onNameChange(event.target.value)}
+							placeholder="Enter a folder name"
+							maxLength={80}
+							aria-invalid={isDuplicate}
+							aria-describedby={
+								errorMessage ? "media-folder-name-error" : undefined
+							}
+						/>
+						{errorMessage && (
+							<p
+								id="media-folder-name-error"
+								className="text-destructive text-xs"
+							>
+								{errorMessage}
+							</p>
+						)}
+					</DialogBody>
+					<DialogFooter>
+						<Button variant="outline" onClick={() => onOpenChange(false)}>
+							Cancel
+						</Button>
+						<Button type="submit" disabled={!canCreate}>
+							Create
+						</Button>
+					</DialogFooter>
+				</form>
+			</DialogContent>
+		</Dialog>
 	);
 }
 
 function MediaScopeRegistrar() {
 	useSelectionScope();
 	return null;
+}
+
+function useMoveDraggedMedia({
+	projectId,
+	folderId,
+}: {
+	projectId: string;
+	folderId: string;
+}) {
+	const editor = useEditor();
+	const { selectedIds } = useSelection();
+	return (event: React.DragEvent) => {
+		const active = editor.timeline.dragSource.getActive();
+		if (active?.type !== "media" || !active.id) return false;
+		event.preventDefault();
+		event.stopPropagation();
+		const assetIds = selectedIds.includes(active.id)
+			? selectedIds
+			: [active.id];
+		editor.command.execute({
+			command: new MoveMediaAssetsCommand({ projectId, assetIds, folderId }),
+		});
+		return true;
+	};
+}
+
+function MediaBreadcrumbDropTarget({
+	label,
+	folderId,
+	projectId,
+	onNavigate,
+	icon,
+}: {
+	label: string;
+	folderId: string;
+	projectId: string;
+	onNavigate: (folderId: string) => void;
+	icon?: React.ReactNode;
+}) {
+	const editor = useEditor();
+	const moveDraggedMedia = useMoveDraggedMedia({ projectId, folderId });
+	return (
+		<button
+			type="button"
+			className="hover:bg-muted flex min-w-0 items-center gap-1 rounded px-1.5 py-1"
+			onClick={() => onNavigate(folderId)}
+			onDragOver={(event) => {
+				if (
+					event.dataTransfer.types.includes("application/x-timeline-drag") ||
+					event.dataTransfer.types.includes(MEDIA_FOLDER_DRAG_MIME)
+				) {
+					event.preventDefault();
+					event.dataTransfer.dropEffect = "move";
+				}
+			}}
+			onDrop={(event) => {
+				if (moveDraggedMedia(event)) return;
+				const draggedFolderId = event.dataTransfer.getData(
+					MEDIA_FOLDER_DRAG_MIME,
+				);
+				if (!draggedFolderId) return;
+				event.preventDefault();
+				event.stopPropagation();
+				editor.command.execute({
+					command: new MoveMediaFolderCommand({
+						projectId,
+						folderId: draggedFolderId,
+						parentId: folderId,
+					}),
+				});
+			}}
+		>
+			{icon}
+			<span className="max-w-28 truncate">{label}</span>
+		</button>
+	);
+}
+
+function MediaBreadcrumbs({
+	folders,
+	projectId,
+	onNavigate,
+}: {
+	folders: MediaFolder[];
+	projectId: string;
+	onNavigate: (folderId: string) => void;
+}) {
+	return (
+		<nav
+			aria-label="Media folders"
+			className="text-muted-foreground mb-2 flex min-h-7 items-center gap-0.5 overflow-x-auto text-[11px]"
+		>
+			<MediaBreadcrumbDropTarget
+				label="Media"
+				folderId={ROOT_MEDIA_FOLDER_ID}
+				projectId={projectId}
+				onNavigate={onNavigate}
+				icon={<House className="size-3" />}
+			/>
+			{folders.map((folder) => (
+				<div className="flex items-center" key={folder.id}>
+					<ChevronRight className="size-3 shrink-0" />
+					<MediaBreadcrumbDropTarget
+						label={folder.name}
+						folderId={folder.id}
+						projectId={projectId}
+						onNavigate={onNavigate}
+					/>
+				</div>
+			))}
+		</nav>
+	);
+}
+
+function MediaFolderList({
+	folders,
+	projectId,
+	onOpen,
+}: {
+	folders: MediaFolder[];
+	projectId: string;
+	onOpen: (folderId: string) => void;
+}) {
+	if (folders.length === 0) return null;
+	return (
+		<div
+			className="mb-3 grid gap-2"
+			style={{ gridTemplateColumns: "repeat(auto-fill, 7rem)" }}
+		>
+			{folders.map((folder) => (
+				<MediaFolderCard
+					key={folder.id}
+					folder={folder}
+					projectId={projectId}
+					onOpen={onOpen}
+				/>
+			))}
+		</div>
+	);
+}
+
+function MediaFolderCard({
+	folder,
+	projectId,
+	onOpen,
+}: {
+	folder: MediaFolder;
+	projectId: string;
+	onOpen: (folderId: string) => void;
+}) {
+	const editor = useEditor();
+	const moveDraggedMedia = useMoveDraggedMedia({
+		projectId,
+		folderId: folder.id,
+	});
+	const rename = () => {
+		const name = window.prompt("Rename folder", folder.name)?.trim();
+		if (!name || name === folder.name) return;
+		editor.command.execute({
+			command: new RenameMediaFolderCommand({
+				projectId,
+				folderId: folder.id,
+				name,
+			}),
+		});
+	};
+	const remove = () => {
+		if (
+			editor.media.getChildFolders({ parentId: folder.id }).length > 0 ||
+			editor.media.getAssetsInFolder({ folderId: folder.id }).length > 0
+		) {
+			toast.error("Only empty folders can be deleted");
+			return;
+		}
+		editor.command.execute({
+			command: new DeleteMediaFolderCommand({ projectId, folderId: folder.id }),
+		});
+	};
+	return (
+		<ContextMenu>
+			<ContextMenuTrigger asChild>
+				<button
+					type="button"
+					draggable
+					className="hover:bg-muted/70 flex h-20 min-w-0 flex-col items-center justify-center gap-1 rounded-md border bg-muted/25 px-2 text-center transition-colors"
+					style={{ contentVisibility: "auto", containIntrinsicSize: "80px" }}
+					onClick={() => onOpen(folder.id)}
+					onDragStart={(event) => {
+						event.dataTransfer.setData(MEDIA_FOLDER_DRAG_MIME, folder.id);
+						event.dataTransfer.effectAllowed = "move";
+					}}
+					onDragOver={(event) => {
+						if (
+							event.dataTransfer.types.includes(
+								"application/x-timeline-drag",
+							) ||
+							event.dataTransfer.types.includes(MEDIA_FOLDER_DRAG_MIME)
+						) {
+							event.preventDefault();
+							event.dataTransfer.dropEffect = "move";
+						}
+					}}
+					onDrop={(event) => {
+						if (moveDraggedMedia(event)) return;
+						const draggedFolderId = event.dataTransfer.getData(
+							MEDIA_FOLDER_DRAG_MIME,
+						);
+						if (!draggedFolderId) return;
+						event.preventDefault();
+						event.stopPropagation();
+						editor.command.execute({
+							command: new MoveMediaFolderCommand({
+								projectId,
+								folderId: draggedFolderId,
+								parentId: folder.id,
+							}),
+						});
+					}}
+				>
+					<Folder className="size-7 text-amber-500" fill="currentColor" />
+					<span className="w-full truncate text-[11px]">{folder.name}</span>
+				</button>
+			</ContextMenuTrigger>
+			<ContextMenuContent>
+				<ContextMenuItem onClick={() => onOpen(folder.id)}>
+					Open
+				</ContextMenuItem>
+				<ContextMenuItem onClick={rename}>Rename</ContextMenuItem>
+				<ContextMenuItem variant="destructive" onClick={remove}>
+					Delete empty folder
+				</ContextMenuItem>
+			</ContextMenuContent>
+		</ContextMenu>
+	);
 }
 
 function MediaAssetDraggable({
@@ -281,6 +754,10 @@ function MediaAssetDraggable({
 		<DraggableItem
 			name={item.name}
 			preview={preview}
+			onDragStart={({ e }) => {
+				// Timeline drops copy media into a scene; folder drops move the catalog item.
+				e.dataTransfer.effectAllowed = "copyMove";
+			}}
 			dragData={{
 				id: item.id,
 				type: "media",
@@ -383,7 +860,14 @@ function MediaItemList({
 		>
 			{items.map((item) => (
 				<MediaItemWithContextMenu item={item} onRemove={onRemove} key={item.id}>
-					<SelectableItem className={cn(!isGrid && "w-full")} id={item.id}>
+					<SelectableItem
+						className={cn(!isGrid && "w-full")}
+						id={item.id}
+						style={{
+							contentVisibility: "auto",
+							containIntrinsicSize: isGrid ? "112px 96px" : "48px",
+						}}
+					>
 						<MediaAssetDraggable
 							item={item}
 							preview={
@@ -532,6 +1016,7 @@ function MediaActions({
 	sortOrder,
 	onSort,
 	onImport,
+	onCreateFolder,
 }: {
 	mediaViewMode: MediaViewMode;
 	setMediaViewMode: (mode: MediaViewMode) => void;
@@ -540,6 +1025,7 @@ function MediaActions({
 	sortOrder: MediaSortOrder;
 	onSort: ({ key }: { key: MediaSortKey }) => void;
 	onImport: () => void;
+	onCreateFolder: () => void;
 }) {
 	return (
 		<div className="flex gap-1.5">
@@ -623,6 +1109,15 @@ function MediaActions({
 					</TooltipContent>
 				</Tooltip>
 			</TooltipProvider>
+			<Button
+				variant="ghost"
+				size="icon"
+				disabled={isProcessing}
+				onClick={onCreateFolder}
+				aria-label="Create media folder"
+			>
+				<FolderPlus className="size-4" />
+			</Button>
 			<Button
 				variant="outline"
 				onClick={onImport}

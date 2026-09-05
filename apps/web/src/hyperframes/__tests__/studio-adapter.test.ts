@@ -28,6 +28,8 @@ function layer(overrides: Partial<StudioLayer> = {}): StudioLayer {
 		label: "Headline",
 		tag: "h1",
 		text: "Hello",
+		textFields: [],
+		textDisabledReason: null,
 		start: 0,
 		duration: 3,
 		track: 0,
@@ -63,6 +65,54 @@ describe("Scene Studio source adapter", () => {
 		);
 		expect(patched).toContain("    <!-- formatting must survive -->");
 		expect(patched).toContain('<script>window.keepExactly = "yes";</script>');
+	});
+
+	test("patches a leaf div as escaped text", async () => {
+		const html = `<section><div data-hf-id="person-name">John D. Rockefeller</div><p>keep</p></section>`;
+		const patched = await applyStudioLayerPatches({
+			html,
+			layer: layer({
+				key: "person-name",
+				hfId: "person-name",
+				selector: '[data-hf-id="person-name"]',
+				tag: "div",
+			}),
+			operations: [
+				{
+					type: "text-content",
+					property: "textContent",
+					value: "Ada <Lovelace> & Co.",
+				},
+			],
+		});
+
+		expect(patched).toBe(
+			`<section><div data-hf-id="person-name">Ada &lt;Lovelace&gt; &amp; Co.</div><p>keep</p></section>`,
+		);
+	});
+
+	test("patches one identified text child without flattening its wrapper", async () => {
+		const html = `<div data-hf-id="card"><svg><path d="M0 0"/></svg><span data-hf-id="name"><strong>Old</strong></span><span data-hf-id="role">Founder</span></div>`;
+		const patched = await applyStudioLayerPatches({
+			html,
+			layer: layer({
+				key: "role",
+				hfId: "role",
+				selector: '[data-hf-id="role"]',
+				tag: "span",
+			}),
+			operations: [
+				{
+					type: "text-content",
+					property: "textContent",
+					value: "Inventor",
+				},
+			],
+		});
+
+		expect(patched).toBe(
+			`<div data-hf-id="card"><svg><path d="M0 0"/></svg><span data-hf-id="name"><strong>Old</strong></span><span data-hf-id="role">Inventor</span></div>`,
+		);
 	});
 
 	test("deletes an identified nested block without touching its siblings", async () => {
@@ -383,8 +433,9 @@ tl.to("#title", {
 		});
 		expect(result.animations).toHaveLength(1);
 		expect(result.runtimeAnimations).toHaveLength(0);
-		expect(result.keyframes.every((keyframe) => keyframe.editability === "direct"))
-			.toBe(true);
+		expect(
+			result.keyframes.every((keyframe) => keyframe.editability === "direct"),
+		).toBe(true);
 	});
 
 	test("updates the easing curve for one keyframe segment", async () => {

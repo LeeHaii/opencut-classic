@@ -56,7 +56,7 @@ export interface ResizeConfig {
 	getSceneTracks: () => SceneTracks;
 	getCurrentPlayheadTime: () => MediaTime;
 	getActiveProjectFps: () => FrameRate | null;
-	selectedElements: ElementRef[];
+	getSelectedElements: () => ElementRef[];
 	discardPreview: () => void;
 	previewElements: (updates: GroupResizeUpdate[]) => void;
 	commitElements: (updates: GroupResizeUpdate[]) => void;
@@ -216,10 +216,11 @@ export class ResizeController {
 		if (!fps) return;
 
 		const ref = { trackId: track.id, elementId: element.id };
-		const activeSelection = this.config.selectedElements.some(
+		const selectedElements = this.config.getSelectedElements();
+		const activeSelection = selectedElements.some(
 			(el) => el.trackId === track.id && el.elementId === element.id,
 		)
-			? this.config.selectedElements
+			? selectedElements
 			: [ref];
 
 		const members = buildResizeMembers({

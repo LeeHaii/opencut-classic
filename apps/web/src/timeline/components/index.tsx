@@ -31,7 +31,7 @@ import {
 } from "react";
 import { useContainerSize } from "@/hooks/use-container-size";
 import type { MediaTime } from "@/wasm";
-import type { ElementDragView, DropTarget } from "@/timeline";
+import type { ElementDragView, ElementRef, DropTarget } from "@/timeline";
 import { TimelineTrackContent } from "./timeline-track";
 import { TimelinePlayhead } from "./timeline-playhead";
 import { SelectionBox } from "@/selection/selection-box";
@@ -91,6 +91,7 @@ import { cn } from "@/utils/ui";
 const TRACKS_CONTAINER_MAX_HEIGHT = 800;
 const FALLBACK_CONTAINER_WIDTH = 1000;
 const TRACKS_CONTAINER_HEIGHT = { min: 0, max: TRACKS_CONTAINER_MAX_HEIGHT };
+const EMPTY_ELEMENT_SELECTION: ElementRef[] = [];
 const TRACK_ICONS: Record<TimelineTrack["type"], ReactNode> = {
 	video: <OcVideoIcon className="text-muted-foreground size-4 shrink-0" />,
 	text: (
@@ -116,12 +117,6 @@ const TRACK_ICONS: Record<TimelineTrack["type"], ReactNode> = {
 
 export function Timeline() {
 	const snappingEnabled = useTimelineStore((s) => s.snappingEnabled);
-	const {
-		selectedElements,
-		clearElementSelection,
-		setElementSelection,
-		mergeElementsIntoSelection,
-	} = useElementSelection();
 	const editor = useEditor();
 	const timeline = editor.timeline;
 	const scene = useEditor((currentEditor) =>
@@ -136,6 +131,43 @@ export function Timeline() {
 	);
 	const mainTrackId = scene?.tracks.main.id ?? null;
 	const seek = (time: MediaTime) => editor.playback.seek({ time });
+	const getElementSelectionSnapshot = useCallback(
+		() => ({
+			selectedIds: editor.selection.getSelectedElements(),
+			anchorId: null,
+		}),
+		[editor],
+	);
+	const handleBoxSelectionChange = useCallback(
+		({
+			intersectedIds,
+			initialSelectedIds,
+			isAdditive,
+		}: {
+			intersectedIds: ElementRef[];
+			initialSelectedIds: ElementRef[];
+			isAdditive: boolean;
+		}) => {
+			if (!isAdditive) {
+				editor.selection.setSelectedElements({ elements: intersectedIds });
+				return;
+			}
+
+			const elements = [
+				...initialSelectedIds.filter(
+					(selectedElement) =>
+						!intersectedIds.some(
+							(element) =>
+								element.trackId === selectedElement.trackId &&
+								element.elementId === selectedElement.elementId,
+						),
+				),
+				...intersectedIds,
+			];
+			editor.selection.setSelectedElements({ elements });
+		},
+		[editor],
+	);
 
 	const timelineRef = useRef<HTMLDivElement>(null);
 	const timelineHeaderRef = useRef<HTMLDivElement>(null);
@@ -343,8 +375,9 @@ export function Timeline() {
 		shouldIgnoreClick,
 	} = useBoxSelect({
 		containerRef: tracksContainerRef,
-		selectedIds: selectedElements,
+		selectedIds: EMPTY_ELEMENT_SELECTION,
 		anchorId: null,
+		getSelectionSnapshot: getElementSelectionSnapshot,
 		getIsAdditiveSelection: (event) =>
 			event.shiftKey || event.ctrlKey || event.metaKey,
 		resolveIntersections: ({ startPos, currentPos }) => {
@@ -361,13 +394,7 @@ export function Timeline() {
 				currentPos,
 			});
 		},
-		onSelectionChange: ({ intersectedIds, isAdditive }) => {
-			if (isAdditive) {
-				mergeElementsIntoSelection({ elements: intersectedIds });
-			} else {
-				setElementSelection({ elements: intersectedIds });
-			}
-		},
+		onSelectionChange: handleBoxSelectionChange,
 	});
 
 	const contentWidth = timelineTimeToPixels({
@@ -421,7 +448,7 @@ export function Timeline() {
 		zoomLevel,
 		duration: timeline.getTotalDuration(),
 		isSelecting,
-		clearSelectedElements: clearElementSelection,
+		clearSelectedElements: () => editor.selection.clearSelection(),
 		seek,
 	});
 
