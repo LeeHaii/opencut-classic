@@ -115,7 +115,7 @@ export function SceneStudioTimeline() {
 	);
 	const exitStudio = useHyperframesStudioStore((state) => state.exit);
 	const selectLayer = useHyperframesStudioStore((state) => state.selectLayer);
-	const setActiveTab = useAssetsPanelStore((state) => state.setActiveTab);
+	const hideStudioTab = useAssetsPanelStore((state) => state.hideStudioTab);
 	const html = located?.element.html ?? "";
 	const document = useMemo(() => parseStudioDocument(html), [html]);
 	const htmlRef = useRef(html);
@@ -217,11 +217,11 @@ export function SceneStudioTimeline() {
 				return;
 			}
 			exitStudio();
-			setActiveTab("hyperframes");
+			hideStudioTab();
 		};
 		window.addEventListener("keydown", handleKeyDown);
 		return () => window.removeEventListener("keydown", handleKeyDown);
-	}, [exitStudio, setActiveTab]);
+	}, [exitStudio, hideStudioTab]);
 
 	const commitMutation = useCallback(
 		(mutate: (currentHtml: string) => Promise<string>) => {
@@ -436,7 +436,7 @@ export function SceneStudioTimeline() {
 					className="h-7 text-[10px]"
 					onClick={() => {
 						exitStudio();
-						setActiveTab("hyperframes");
+						hideStudioTab();
 					}}
 				>
 					<Film className="size-3" />

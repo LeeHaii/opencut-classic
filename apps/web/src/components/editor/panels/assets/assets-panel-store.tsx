@@ -109,6 +109,9 @@ export type MediaSortOrder = "asc" | "desc";
 interface AssetsPanelStore {
 	activeTab: Tab;
 	setActiveTab: (tab: Tab) => void;
+	studioTabVisible: boolean;
+	showStudioTab: () => void;
+	hideStudioTab: () => void;
 	highlightMediaId: string | null;
 	requestRevealMedia: (mediaId: string) => void;
 	clearHighlight: () => void;
@@ -127,7 +130,20 @@ export const useAssetsPanelStore = create<AssetsPanelStore>()(
 	persist(
 		(set) => ({
 			activeTab: "media",
-			setActiveTab: (tab) => set({ activeTab: tab }),
+			setActiveTab: (tab) =>
+				set((state) =>
+					tab === "studio" && !state.studioTabVisible
+						? state
+						: { activeTab: tab },
+				),
+			studioTabVisible: false,
+			showStudioTab: () => set({ studioTabVisible: true, activeTab: "studio" }),
+			hideStudioTab: () =>
+				set((state) => ({
+					studioTabVisible: false,
+					activeTab:
+						state.activeTab === "studio" ? "hyperframes" : state.activeTab,
+				})),
 			highlightMediaId: null,
 			requestRevealMedia: (mediaId) =>
 				set({ activeTab: "media", highlightMediaId: mediaId }),

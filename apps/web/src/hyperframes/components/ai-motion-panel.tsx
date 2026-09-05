@@ -792,7 +792,7 @@ export function AiMotionPanelView() {
 		if (!entry) return;
 		useHyperframesStudioStore.getState().enter({ elementId: entry.element.id });
 		editor.playback.seek({ time: entry.element.startTime });
-		useAssetsPanelStore.getState().setActiveTab("studio");
+		useAssetsPanelStore.getState().showStudioTab();
 	};
 
 	useEffect(() => {

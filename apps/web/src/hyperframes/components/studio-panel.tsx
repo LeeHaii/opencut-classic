@@ -49,7 +49,7 @@ const HyperframesSourceEditor = dynamic(
 export function StudioPanelView() {
 	const { located } = useActiveStudioElement();
 	const exitStudio = useHyperframesStudioStore((state) => state.exit);
-	const setActiveTab = useAssetsPanelStore((state) => state.setActiveTab);
+	const hideStudioTab = useAssetsPanelStore((state) => state.hideStudioTab);
 
 	if (!located) {
 		return (
@@ -61,7 +61,7 @@ export function StudioPanelView() {
 						size="sm"
 						onClick={() => {
 							exitStudio();
-							setActiveTab("hyperframes");
+							hideStudioTab();
 						}}
 					>
 						Go to AI Motion
@@ -76,7 +76,7 @@ export function StudioPanelView() {
 			key={located.element.id}
 			onExit={() => {
 				exitStudio();
-				setActiveTab("hyperframes");
+				hideStudioTab();
 			}}
 		/>
 	);
